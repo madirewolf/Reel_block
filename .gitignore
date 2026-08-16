@@ -1,0 +1,44 @@
+# secrets - never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+secrets.json
+credentials.json
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# android / gradle
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.keystore
+*.jks
+captures/
+
+# --- pre-existing ---
+*.iml
+.gradle
+/local.properties
+.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/app/build/
+/app/release/
+/app/debug/
+*.apk
+*.aab
+*.jks
+*.keystore

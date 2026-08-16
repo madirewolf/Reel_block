@@ -1,0 +1,22 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="OverlayBannerAnim" parent="">
+        <item name="android:windowEnterAnimation">@anim/banner_slide_in_top</item>
+        <item name="android:windowExitAnimation">@anim/banner_slide_out_top</item>
+    </style>
+
+    <style name="Theme.ReelBlock" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/rb_primary</item>
+        <item name="colorOnPrimary">@color/rb_on_surface</item>
+        <item name="colorPrimaryContainer">@color/rb_primary_variant</item>
+        <item name="colorSecondary">@color/rb_accent</item>
+        <item name="colorSurface">@color/rb_surface</item>
+        <item name="colorSurfaceVariant">@color/rb_surface_variant</item>
+        <item name="colorOnSurface">@color/rb_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/rb_on_surface_muted</item>
+        <item name="android:colorBackground">@color/rb_bg</item>
+        <item name="android:statusBarColor">@color/rb_bg</item>
+        <item name="android:navigationBarColor">@color/rb_bg</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+</resources>
