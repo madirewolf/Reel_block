@@ -1,0 +1,65 @@
+<resources>
+    <string name="app_name">Reel It In</string>
+
+    <string name="accessibility_service_label">Reel It In monitor</string>
+    <string name="accessibility_service_description">Reel It In watches Instagram for the Reels feed and shuts it down the instant it opens. Reels shared in your DMs still play — one reel, one viewing, no swipe to the next.</string>
+    <string name="accessibility_service_summary">Kill the Reels feed. Keep reels your friends actually send you.</string>
+
+    <string name="tagline">Make Instagram about your actual friends again.</string>
+    <string name="hero_description">Reel It In sits between you and the slot machine. The Reels tab gets shut down the moment you land on it. Reels your friends share in DMs still work — one reel, one viewing, no autoswipe to the next. Think of it as a dopamine cleanse for your feed.</string>
+
+    <string name="card_overlay_title">Display overlay</string>
+    <string name="card_overlay_body">Used to cover the reel feed the instant it appears, while Reel It In navigates you away.</string>
+    <string name="card_overlay_grant">Grant overlay permission</string>
+    <string name="card_overlay_granted">Granted</string>
+    <string name="card_overlay_missing">Not granted</string>
+
+    <string name="card_accessibility_title">Accessibility service</string>
+    <string name="card_accessibility_body">Required to detect which Instagram screen is on top. Reel It In only inspects Instagram — no other apps are monitored.</string>
+    <string name="card_accessibility_open">Open Accessibility settings</string>
+    <string name="card_accessibility_enabled">Enabled</string>
+    <string name="card_accessibility_disabled">Disabled</string>
+
+    <string name="card_status_title">Blocker status</string>
+    <string name="card_status_active">Active — reeling you in</string>
+    <string name="card_status_paused">Paused — complete setup above</string>
+    <string name="card_status_disabled_by_user">Disabled — toggle back on to resume the cleanse</string>
+    <string name="toggle_blocking">Blocking enabled</string>
+
+    <string name="toggle_dm_reels">Allow reels from DMs</string>
+    <string name="toggle_dm_reels_title">Allow reels from DMs</string>
+    <string name="toggle_dm_reels_body">A reel a friend shares in a DM plays once — swiping to the next one is still blocked. Turn off to block DM reels too.</string>
+
+    <string name="view_log">View live detection log</string>
+    <string name="detection_log_title">Detection log</string>
+    <string name="detection_log_empty">No events yet. Open Instagram to see detections flow in.</string>
+    <string name="detection_log_clear">Clear</string>
+    <string name="detection_log_share">Export JSON</string>
+    <string name="detection_log_export_empty">No log entries to export yet.</string>
+    <string name="detection_log_saved_to">Saved to %1$s · also copied to clipboard</string>
+    <string name="detection_log_clipboard_only">Couldn\'t save to Downloads — JSON copied to clipboard.</string>
+
+    <string name="how_it_works_title">How it works</string>
+    <string name="how_it_works_body">Reel It In uses Android\'s Accessibility framework to read the top window when Instagram is in the foreground. The detector identifies:\n\n• The Reels tab (main reels feed) — always blocked.\n• A DM thread followed by a reel viewer — the reel is allowed, once.\n• Any scroll or swipe to a different reel — blocked.\n\nWhen blocking triggers, a banner appears and the app routes you back to the last non-Reels Instagram tab when it can, or backs out once from a fullscreen reel viewer.\n\nThe point: claim back your attention. Use Instagram to see what your friends are actually up to — not to get brainmaxxed by an algorithm.</string>
+
+    <string name="reel_blocked_title">Reeled in.</string>
+    <string name="reel_blocked_subtitle">Not from a friend. Dopamine receptors thank you.</string>
+    <string name="reel_blocked_dismissed">Taking you back…</string>
+
+    <string name="notif_channel_id">reel_block_status</string>
+    <string name="notif_channel_name">Reel It In status</string>
+    <string name="notif_title_active">Reel It In — watching Instagram</string>
+    <string name="notif_title_paused">Reel It In — paused</string>
+    <string name="notif_action_open_log">Open log</string>
+
+    <string name="nav_up">Back</string>
+
+    <string name="card_liveness_title">Service liveness</string>
+    <string name="card_liveness_none">No events yet. Open Instagram to wake the service.</string>
+    <string name="card_liveness_body">Last detection %1$s ago — if this timer keeps growing while you\'re in Instagram, an OEM battery saver is likely killing the service.</string>
+    <string name="card_liveness_never">Service hasn\'t fired yet. If it stays this way after you open Instagram, disable battery optimization below.</string>
+    <string name="card_battery_title">Keep the service alive</string>
+    <string name="card_battery_body">Samsung, Xiaomi, OnePlus and others kill background accessibility services to save battery. Disable battery optimization for Reel It In and lock the app in recents for reliable blocking.</string>
+    <string name="card_battery_open">Disable battery optimization</string>
+    <string name="card_battery_guide_open">Open OEM survival guide</string>
+</resources>

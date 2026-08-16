@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="rb_bg">#0F0A1A</color>
+    <color name="rb_surface">#1C1430</color>
+    <color name="rb_surface_variant">#2A1D47</color>
+    <color name="rb_on_surface">#F3EEFF</color>
+    <color name="rb_on_surface_muted">#B9AFD4</color>
+    <color name="rb_primary">#E1306C</color>
+    <color name="rb_primary_variant">#C13584</color>
+    <color name="rb_accent">#F77737</color>
+    <color name="rb_danger">#FF4D6D</color>
+    <color name="rb_success">#4ADE80</color>
+    <color name="rb_warning">#FACC15</color>
+    <color name="rb_divider">#322652</color>
+    <color name="rb_overlay_backdrop">#EE120A1F</color>
+    <color name="rb_chip_ok">#1E4033</color>
+    <color name="rb_chip_ok_fg">#86EFAC</color>
+    <color name="rb_chip_warn">#4A2A00</color>
+    <color name="rb_chip_warn_fg">#FBBF24</color>
+
+    <color name="ic_launcher_background">#1C1430</color>
+</resources>
