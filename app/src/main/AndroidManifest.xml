@@ -38,6 +38,11 @@
             android:label="@string/detection_log_title"
             android:parentActivityName=".MainActivity" />
 
+        <!-- The notification's Pause 1 min / Resume now buttons. -->
+        <receiver
+            android:name=".NotificationActionReceiver"
+            android:exported="false" />
+
         <service
             android:name=".ReelBlockerService"
             android:exported="true"

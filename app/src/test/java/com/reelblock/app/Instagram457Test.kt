@@ -39,6 +39,43 @@ class Instagram457Test {
     }
 
     @Test
+    fun `selected state on the tab icon alone still names the tab`() {
+        // Bug: the Nov 20 2026 Instagram update marks only the button's
+        // unlabelled tab_icon child selected, so no tab was found and the
+        // Home feed lost its reel covers.
+        fun bar(selected: String) = NodeSnapshotFactory.node(
+            id = IG + "tab_bar",
+            children = listOf("feed_tab" to "Home", "clips_tab" to "Reels", "search_tab" to "Search and explore")
+                .map { (id, desc) ->
+                    NodeSnapshotFactory.node(
+                        id = IG + id,
+                        contentDescription = desc,
+                        children = listOf(
+                            NodeSnapshotFactory.node(
+                                id = IG + "tab_icon",
+                                isSelected = ReelDetector.tabLabelFromViewId(IG + id) == selected,
+                            ),
+                        ),
+                    )
+                },
+        )
+        fun screen(selected: String) = NodeSnapshotFactory.node(children = listOf(bar(selected)))
+        assertThat(ReelDetector.extractSelectedBottomTab(screen(ReelDetector.TAB_HOME)))
+            .isEqualTo(ReelDetector.TAB_HOME)
+        assertThat(ReelDetector.extractSelectedBottomTab(screen(ReelDetector.TAB_REELS)))
+            .isEqualTo(ReelDetector.TAB_REELS)
+        assertThat(ReelDetector.detectScreen(screen(ReelDetector.TAB_REELS)))
+            .isEqualTo(ScreenType.REELS_TAB)
+        // An unrelated selected node outside any tab names nothing.
+        val stray = NodeSnapshotFactory.node(children = listOf(
+            NodeSnapshotFactory.node(id = IG + "tab_bar", children = listOf(
+                NodeSnapshotFactory.node(id = IG + "tab_icon", isSelected = true),
+            )),
+        ))
+        assertThat(ReelDetector.extractSelectedBottomTab(stray)).isNull()
+    }
+
+    @Test
     fun `hidden reels page never yields a reel signature`() {
         val screen = NodeSnapshotFactory.ig457MainScreen(ReelDetector.TAB_HOME)
         assertThat(ReelDetector.extractReelSignature(screen)).isNull()
@@ -140,6 +177,50 @@ class Instagram457Test {
         val peek = NodeSnapshotFactory.ig457ExplorePeek(video = true)
         val action = sm.handleScreen(ReelDetector.detectScreen(peek), ReelDetector.extractReelSignature(peek))
         assertThat(action).isEqualTo(SessionStateMachine.Action.BLOCK_REEL)
+    }
+
+    @Test
+    fun `opening a Home feed reel is not a Reels tab tap`() {
+        // Bug: Instagram 457 opens a feed reel inside the Reels tab and
+        // fires a select event from an unnamed "Reels" view. Read as a
+        // tab tap, it blocked the reel with Home switched off.
+        val type = ReelDetector.classifyByBottomNavEvent(
+            AccessibilityEvent.TYPE_VIEW_SELECTED, "Reels", null,
+        )
+        assertThat(type).isNull()
+        assertThat(ReelDetector.bottomNavTabForEvent("Reels", null, isClick = false)).isNull()
+        // A real tap on the tab names its button, selected or clicked.
+        assertThat(
+            ReelDetector.classifyByBottomNavEvent(AccessibilityEvent.TYPE_VIEW_SELECTED, "Reels", IG + "clips_tab"),
+        ).isEqualTo(ScreenType.REELS_TAB)
+    }
+
+    @Test
+    fun `a feed reel's full screen player with a Reels header is a reel viewer`() {
+        // Bug: the player Instagram 457 opens from the Home feed has no tab
+        // bar and a selected "Reels" header, which read as the Reels tab.
+        val player = NodeSnapshotFactory.node(children = listOf(
+            NodeSnapshotFactory.node(contentDescription = "Reels", isSelected = true, className = "android.widget.LinearLayout"),
+            NodeSnapshotFactory.node(id = IG + "clips_viewer_view_pager"),
+        ))
+        assertThat(ReelDetector.extractSelectedBottomTab(player)).isNull()
+        assertThat(ReelDetector.detectScreen(player)).isEqualTo(ScreenType.REEL_VIEWER)
+        // The tab's own id still counts without a bar around it.
+        val tab = NodeSnapshotFactory.node(children = listOf(
+            NodeSnapshotFactory.node(id = IG + "clips_tab", contentDescription = "Reels", isSelected = true),
+        ))
+        assertThat(ReelDetector.extractSelectedBottomTab(tab)).isEqualTo(ReelDetector.TAB_REELS)
+    }
+
+    @Test
+    fun `a Home feed reel follows the Home switch`() {
+        val sm = SessionStateMachine().apply { blockHomeReels = false }
+        sm.handleScreen(ScreenType.OTHER, null)
+        assertThat(sm.handleScreen(ScreenType.REEL_VIEWER, "user:some.author", SessionStateMachine.ReelOrigin.HOME))
+            .isEqualTo(SessionStateMachine.Action.ALLOW_REEL)
+        val on = SessionStateMachine()
+        assertThat(on.handleScreen(ScreenType.REEL_VIEWER, "user:some.author", SessionStateMachine.ReelOrigin.HOME))
+            .isEqualTo(SessionStateMachine.Action.BLOCK_REEL)
     }
 
     @Test

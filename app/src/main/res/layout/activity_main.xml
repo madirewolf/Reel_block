@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One screen: title and status, then Setup 1-2-3, then Options. -->
+<!-- One screen: title and status, Setup 1-2-3, Options, where to block, and the block screen. -->
 <androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_scroll"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/rb_bg"
@@ -22,6 +23,14 @@
             android:text="@string/app_name"
             android:textColor="@color/rb_on_surface"
             android:textSize="30sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="@string/tagline"
+            android:textColor="@color/rb_on_surface_muted"
+            android:textSize="13sp" />
 
         <LinearLayout
             android:layout_width="wrap_content"
@@ -257,6 +266,222 @@
         <View style="@style/RB.Divider" />
 
         <LinearLayout
+            android:id="@+id/row_notification"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="18dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/RB.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/option_notif_title" />
+
+                <TextView
+                    style="@style/RB.Body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/option_notif_body" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_notification"
+                style="@style/RB.Switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/toggle_notification"
+                app:switchMinWidth="52dp" />
+        </LinearLayout>
+
+        <View style="@style/RB.Divider" />
+
+        <!-- ===== Where ===== -->
+        <TextView
+            style="@style/RB.Section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="48dp"
+            android:layout_marginBottom="12dp"
+            android:text="@string/section_places" />
+
+        <View style="@style/RB.Divider" />
+
+        <LinearLayout
+            android:id="@+id/row_reels"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="18dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/RB.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/place_reels_title" />
+
+                <TextView
+                    style="@style/RB.Body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/place_reels_body" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_reels"
+                style="@style/RB.Switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/toggle_reels_tab"
+                app:switchMinWidth="52dp" />
+        </LinearLayout>
+
+        <View style="@style/RB.Divider" />
+
+        <LinearLayout
+            android:id="@+id/row_home"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="18dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/RB.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/place_home_title" />
+
+                <TextView
+                    style="@style/RB.Body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/place_home_body" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_home"
+                style="@style/RB.Switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/toggle_home"
+                app:switchMinWidth="52dp" />
+        </LinearLayout>
+
+        <View style="@style/RB.Divider" />
+
+        <LinearLayout
+            android:id="@+id/row_explore"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="18dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/RB.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/place_explore_title" />
+
+                <TextView
+                    style="@style/RB.Body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/place_explore_body" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_explore"
+                style="@style/RB.Switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/toggle_explore"
+                app:switchMinWidth="52dp" />
+        </LinearLayout>
+
+        <View style="@style/RB.Divider" />
+
+        <LinearLayout
+            android:id="@+id/row_profile"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="18dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/RB.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/place_profile_title" />
+
+                <TextView
+                    style="@style/RB.Body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/place_profile_body" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_profile"
+                style="@style/RB.Switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/toggle_profile"
+                app:switchMinWidth="52dp" />
+        </LinearLayout>
+
+        <View style="@style/RB.Divider" />
+
+        <LinearLayout
             android:id="@+id/row_dm"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -276,67 +501,85 @@
                     style="@style/RB.Title"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/option_dm_title" />
+                    android:text="@string/place_dm_title" />
 
                 <TextView
                     style="@style/RB.Body"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="@string/option_dm_body" />
+                    android:text="@string/place_dm_body" />
             </LinearLayout>
 
             <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switch_dm_reels"
+                android:id="@+id/switch_dm"
                 style="@style/RB.Switch"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:contentDescription="@string/toggle_dm_reels"
+                android:contentDescription="@string/toggle_dm"
                 app:switchMinWidth="52dp" />
         </LinearLayout>
 
         <View style="@style/RB.Divider" />
 
-        <LinearLayout
-            android:id="@+id/row_feed"
+        <TextView
+            android:id="@+id/places_footnote"
+            style="@style/RB.Body"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/places_footnote" />
+
+        <!-- ===== Block screen ===== -->
+        <TextView
+            style="@style/RB.Section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="48dp"
+            android:layout_marginBottom="16dp"
+            android:text="@string/section_cover" />
+
+        <!-- The real cover layout, shown small. A 1dp line frames it. -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/rb_line"
+            android:padding="1dp">
+
+            <include
+                android:id="@+id/cover_preview"
+                layout="@layout/blocking_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="168dp" />
+        </FrameLayout>
+
+        <!-- Filled in code: one square per color in CoverLook.SWATCHES. -->
+        <LinearLayout
+            android:id="@+id/swatch_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="horizontal" />
+
+        <!-- Filled in code: Plain, Dots, Stripes, Grid, Photo. -->
+        <LinearLayout
+            android:id="@+id/style_row"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal" />
+
+        <TextView
+            android:id="@+id/cover_change_photo"
+            style="@style/RB.Title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
             android:background="?attr/selectableItemBackground"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingVertical="18dp">
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="16dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    style="@style/RB.Title"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/option_feed_title" />
-
-                <TextView
-                    style="@style/RB.Body"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:text="@string/option_feed_body" />
-            </LinearLayout>
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switch_feed_reels"
-                style="@style/RB.Switch"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:contentDescription="@string/toggle_feed_reels"
-                app:switchMinWidth="52dp" />
-        </LinearLayout>
-
-        <View style="@style/RB.Divider" />
+            android:paddingVertical="10dp"
+            android:text="@string/cover_change_photo"
+            android:textSize="14sp"
+            android:visibility="gone" />
 
         <LinearLayout
             android:id="@+id/row_log"

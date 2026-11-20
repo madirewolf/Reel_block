@@ -1,0 +1,15 @@
+# Static site for reelitin.limiliminal.com. No build step.
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "DENY"
+
+[[redirects]]
+  from = "/privacy"
+  to = "/privacy.html"
+  status = 200

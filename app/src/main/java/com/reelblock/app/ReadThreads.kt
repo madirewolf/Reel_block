@@ -12,12 +12,14 @@ import android.os.Process
  * lookup 50-150 ms. On the main thread every event queued behind them:
  * a tap on the Reels tab reached the service ~450 ms late, after Reels
  * had drawn. Results go back to the main thread, which owns all session
- * state. Two threads, so feed covers keep up with scrolling while a
- * slow tree read is running.
+ * state. Separate threads, so feed covers keep up with scrolling and the
+ * front-app check stays quick while a slow tree read is running.
  */
 internal object ReadThreads {
     val tree: Handler by lazy { start("ReelItInTreeRead") }
     val feed: Handler by lazy { start("ReelItInFeedRead") }
+    /** Checks which app is in front; see [FrontWindow]. */
+    val guard: Handler by lazy { start("ReelItInFrontCheck") }
 
     private fun start(name: String): Handler {
         val thread = HandlerThread(name, Process.THREAD_PRIORITY_FOREGROUND)

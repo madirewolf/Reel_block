@@ -233,6 +233,26 @@ object ReelDetector {
     /** Video player parts inside a preview; a photo preview has none. */
     private val PEEK_VIDEO_ID_SEGMENTS = setOf("video_states", "countdown_timer")
 
+    /** Feed post rows (`row_feed_profile_header`, `row_feed_photo_imageview`, ...). */
+    private const val FEED_ROW_ID_PREFIX = "row_feed_"
+
+    /** The reply bar under a reel opened from a DM thread, Instagram 457. */
+    private val DM_REPLY_BAR_ID_SEGMENTS = setOf(
+        "reel_viewer_message_composer", "reply_bar_container", "reply_bar_edittext",
+    )
+
+    /** Profile page ids, Instagram 457, checked against live trees. */
+    private val PROFILE_HEADER_ID_SEGMENTS = setOf("profile_header_container", "row_profile_header")
+    private const val PROFILE_PAGER_ID = "profile_viewpager"
+    /** Only on the user's own profile: the "+" create button and the account-switch chevron. */
+    private val OWN_PROFILE_ID_SEGMENTS = setOf(
+        "profile_header_create_button", "action_bar_title_chevron", "create_highlight_button_view",
+    )
+    /** Only on someone else's profile. */
+    private val PROFILE_FOLLOW_ID_SEGMENTS = setOf(
+        "profile_header_follow_button", "profile_header_user_action_follow_button",
+    )
+
     /**
      * Ids that identify the STORY viewer. Instagram's internal name for
      * stories is "reel" (singular — the stories tray is `reels_tray`),
@@ -290,7 +310,8 @@ object ReelDetector {
         ) {
             return null
         }
-        val tab = bottomNavTabForEvent(eventContentDescription, sourceViewId) ?: return null
+        val isClick = eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED
+        val tab = bottomNavTabForEvent(eventContentDescription, sourceViewId, isClick) ?: return null
         return when (tab) {
             TAB_REELS -> ScreenType.REELS_TAB
             TAB_DIRECT -> ScreenType.DM_INBOX
@@ -303,14 +324,18 @@ object ReelDetector {
      * isn't a bottom-nav tap. A known tab id decides. Any other id means
      * a different control: another user's profile has a "Reels" grid
      * tab, and treating that tap as the Reels tab blocked their profile.
-     * Only an event with no id at all falls back to the description.
+     * Only a click with no id at all falls back to the description: on
+     * Instagram 457 opening a Home feed reel fires a select event from an
+     * unnamed view described "Reels", and reading that as a Reels tab tap
+     * blocked the reel even with Home switched off.
      */
     fun bottomNavTabForEvent(
         eventContentDescription: CharSequence?,
         sourceViewId: String?,
+        isClick: Boolean = true,
     ): String? {
         tabLabelFromViewId(sourceViewId)?.let { return it }
-        if (sourceViewId != null) return null
+        if (sourceViewId != null || !isClick) return null
         return tabLabelFromDescription(eventContentDescription)
     }
 
@@ -439,10 +464,15 @@ object ReelDetector {
         // heuristics run after it, because a fullscreen STORY also
         // carries like/share/mute icons plus a video surface and would
         // otherwise false-positive as REEL_VIEWER.
+        // Feed rows veto the fuzzy branch: a read of just the Home feed's
+        // list (no tab bar in it) carries like / comment / share icons
+        // and a playing video, and blocking it sent Home back to the top
+        // on every scroll.
         return when {
             reelViewerIdHits > 0 -> ScreenType.REEL_VIEWER
             hasStoryViewerMarkers(nodes) -> ScreenType.OTHER
-            (reelActionHits >= 3 && hasVideo) || reelActionHits >= 4 ->
+            ((reelActionHits >= 3 && hasVideo) || reelActionHits >= 4) &&
+                !hasFeedRowMarkers(nodes) ->
                 ScreenType.REEL_VIEWER
             hasDmThreadMarkers(nodes) -> ScreenType.DM_THREAD
             hasDmInboxMarkers(nodes) -> ScreenType.DM_INBOX
@@ -619,16 +649,25 @@ object ReelDetector {
      * report BOTH the previously-selected and newly-selected tabs as
      * `isSelected=true` for 300–700 ms after a tap; naive first-match
      * logic made taps on Search/Home/Profile trigger the Reels block.
+     *
+     * Inside the bar, a tab counts as selected when the tab button or
+     * anything inside it is: the November 2026 Instagram update marks
+     * only the button's unlabelled `tab_icon` child as selected.
      */
     private fun extractSelectedBottomTabFromNodes(nodes: List<NodeSnapshot>): String? {
         val tabBar = nodes.firstOrNull { isTabBarId(it.viewIdResourceName) }
-        val candidates = tabBar?.flatten()?.toList() ?: nodes
         var reelsSeen = false
-        for (node in candidates) {
-            if (!node.isSelected) continue
-            val tab = tabLabelFromViewId(node.viewIdResourceName)
-                ?: tabLabelFromDescription(node.contentDescription)
-                ?: continue
+        for (node in tabBar?.flatten() ?: nodes.asSequence()) {
+            val byId = tabLabelFromViewId(node.viewIdResourceName)
+            // Outside a tab bar, "Reels" by label alone is not the tab:
+            // a reel opened from the Home feed plays full screen under a
+            // selected "Reels" header, and reading that as the Reels tab
+            // ignored the Home switch.
+            val byLabel = tabLabelFromDescription(node.contentDescription)
+                ?.takeIf { tabBar != null || it != TAB_REELS }
+            val tab = byId ?: byLabel ?: continue
+            val selected = if (tabBar != null) node.flatten().any { it.isSelected } else node.isSelected
+            if (!selected) continue
             if (tab == TAB_REELS) reelsSeen = true else return tab
         }
         return if (reelsSeen) TAB_REELS else null
@@ -658,6 +697,69 @@ object ReelDetector {
 
     private fun idSegment(node: NodeSnapshot): String? =
         node.viewIdResourceName?.lowercase()?.substringAfterLast('/')
+
+    /** Home-feed post rows: `row_feed_*` ids or the post's media group. */
+    private fun hasFeedRowMarkers(nodes: List<NodeSnapshot>): Boolean =
+        nodes.any { node ->
+            val seg = idSegment(node) ?: return@any false
+            seg.startsWith(FEED_ROW_ID_PREFIX) || seg == FEED_MEDIA_GROUP_ID
+        }
+
+    /** True when the real reel player's own `clips_viewer*` ids are in [root]. */
+    fun hasReelViewerIds(root: NodeSnapshot?): Boolean =
+        root != null && countReelViewerIdMarkers(root.flatten().toList()) > 0
+
+    /**
+     * Reel signs that hold up in a read of one scrolled list on its own:
+     * the player's own ids, or a long-press preview playing a video. The
+     * fuzzy action-icon count does not: a Home feed list read alone has
+     * no tab bar around it and can look like a player.
+     */
+    fun hasStrongReelMarkers(root: NodeSnapshot?): Boolean {
+        if (root == null) return false
+        val nodes = root.flatten().toList()
+        return countReelViewerIdMarkers(nodes) > 0 || hasVideoPeek(nodes)
+    }
+
+    /**
+     * True when the reel player in [root] has the "Send message" reply
+     * bar under it. Instagram 457 draws it only on a reel opened from a
+     * DM thread, so it marks a DM reel even before the thread was read.
+     */
+    fun hasDmReplyBar(root: NodeSnapshot?): Boolean =
+        root != null && root.flatten().any { idSegment(it) in DM_REPLY_BAR_ID_SEGMENTS }
+
+    /** What kind of profile page, if any, [root] shows. */
+    enum class ProfilePageKind {
+        /** The user's own profile, header on screen. */
+        OWN,
+        /** Someone else's profile, header on screen. */
+        OTHER_PROFILE,
+        /** A profile's grid scrolled past its header: whose is unknown. */
+        NO_HEADER,
+        /** A main tab with no profile page on it (Home, Explore, Reels, DMs). */
+        MAIN_SURFACE,
+        /** Anything else, or too little of the tree to tell. */
+        NEUTRAL,
+    }
+
+    fun profilePageKind(root: NodeSnapshot?): ProfilePageKind {
+        if (root == null) return ProfilePageKind.NEUTRAL
+        val nodes = root.flatten().toList()
+        val segs = nodes.mapNotNull { idSegment(it) }.toSet()
+        val hasHeader = PROFILE_HEADER_ID_SEGMENTS.any { it in segs }
+        if (hasHeader) {
+            val followButton = PROFILE_FOLLOW_ID_SEGMENTS.any { it in segs }
+            val ownMarker = OWN_PROFILE_ID_SEGMENTS.any { it in segs } ||
+                nodes.any { n ->
+                    val d = n.contentDescription?.trim()?.lowercase() ?: return@any false
+                    d == "edit profile" || d.startsWith("your profile")
+                }
+            return if (ownMarker && !followButton) ProfilePageKind.OWN else ProfilePageKind.OTHER_PROFILE
+        }
+        if (PROFILE_PAGER_ID in segs) return ProfilePageKind.NO_HEADER
+        return if (nodesHaveMainTabBar(nodes)) ProfilePageKind.MAIN_SURFACE else ProfilePageKind.NEUTRAL
+    }
 
     /** True when [nodes] hold a long-press preview that plays a video:
      *  a video surface or player ids in it, or a "posted a video" header. */
