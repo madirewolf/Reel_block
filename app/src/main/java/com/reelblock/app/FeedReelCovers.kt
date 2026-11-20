@@ -7,6 +7,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Opaque boxes drawn over reels that play inside the Home feed, for the
@@ -17,15 +18,36 @@ import android.view.WindowManager
  * overlay that is not touchable, so the feed still scrolls under a box
  * and a tap on one goes through to the reel. Opening that reel is then
  * blocked like any other reel.
+ *
+ * Window work runs on [OverlayThread] (see there for why).
  */
 class FeedReelCovers(private val service: AccessibilityService) {
 
+    private val handler = OverlayThread.handler
+
+    /** The boxes asked for last; the overlay thread applies only the
+     *  newest, so a fast scroll does not queue up stale layouts. */
+    private val pending = AtomicReference<List<ScreenRect>?>(null)
+    private val applyPending = Runnable { pending.getAndSet(null)?.let { apply(it) } }
+
+    @Volatile
+    private var requested: List<ScreenRect> = emptyList()
+
+    /** True when boxes are up or on their way (any thread). */
+    val isShowing: Boolean get() = requested.isNotEmpty()
+
+    // Overlay thread only.
     private val views = mutableListOf<View>()
     private var lastRects: List<ScreenRect> = emptyList()
 
-    val isShowing: Boolean get() = views.isNotEmpty()
-
     fun show(rects: List<ScreenRect>) {
+        requested = rects
+        if (pending.getAndSet(rects) == null) handler.post(applyPending)
+    }
+
+    fun clear() = show(emptyList())
+
+    private fun apply(rects: List<ScreenRect>) {
         if (rects == lastRects) return
         val wm = service.getSystemService(WindowManager::class.java) ?: return
         while (views.size > rects.size) {
@@ -49,17 +71,11 @@ class FeedReelCovers(private val service: AccessibilityService) {
                 }
             }
         }
-        if (lastRects.isEmpty() && rects.isNotEmpty()) Log.d(TAG, "feed cover shown x${rects.size}")
+        when {
+            lastRects.isEmpty() && rects.isNotEmpty() -> Log.d(TAG, "feed cover shown x${rects.size}")
+            lastRects.isNotEmpty() && rects.isEmpty() -> Log.d(TAG, "feed covers cleared")
+        }
         lastRects = rects
-    }
-
-    fun clear() {
-        if (views.isEmpty()) return
-        val wm = service.getSystemService(WindowManager::class.java)
-        views.forEach { removeView(wm, it) }
-        views.clear()
-        lastRects = emptyList()
-        Log.d(TAG, "feed covers cleared")
     }
 
     private fun removeView(wm: WindowManager?, v: View) {

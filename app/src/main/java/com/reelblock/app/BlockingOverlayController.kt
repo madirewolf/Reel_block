@@ -2,8 +2,7 @@ package com.reelblock.app
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.PixelFormat
-import android.os.Handler
-import android.os.Looper
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.LayoutInflater
@@ -22,26 +21,47 @@ import android.view.WindowManager
  * [CoverTiming]: up immediately, down as soon as the user has landed
  * off the reel, and never longer than ~1.2 s.
  *
- * (An earlier version showed a slide-in banner at the top of the
- * screen; it was removed because it appeared late and fought the
- * navigation. This cover appears synchronously with the block decision
- * and has no animation.)
+ * All window work runs on [OverlayThread], so the cover draws within a
+ * frame even while the main thread is reading Instagram's tree. Calls
+ * from the main thread are posted there in order.
  */
 class BlockingOverlayController(private val service: AccessibilityService) {
 
-    private val handler = Handler(Looper.getMainLooper())
+    private val handler = OverlayThread.handler
+
+    // Overlay thread only.
     private val timing = CoverTiming()
     private var view: View? = null
+    private var inflated: View? = null
     private val hideRunnable = Runnable { hideNow() }
     private var shownAt = 0L
 
-    val isShowing: Boolean get() = view != null
+    /** Inflate the cover ahead of time. The first block after the service
+     *  starts took ~120 ms to inflate it; a warm one takes ~10 ms. */
+    fun warmUp() {
+        handler.post { coverView() }
+    }
 
     fun showBlocked() {
+        val requestedAt = SystemClock.uptimeMillis()
+        handler.post { showNow(requestedAt) }
+    }
+
+    /** The user is off the reel — take the cover down once it has been
+     *  up long enough not to flicker. */
+    fun hideSoon() {
+        handler.post { hideSoonNow() }
+    }
+
+    fun hide() {
+        handler.post { hideNow() }
+    }
+
+    private fun showNow(requestedAt: Long) {
         val now = SystemClock.uptimeMillis()
         if (view == null) {
             val wm = service.getSystemService(WindowManager::class.java) ?: return
-            val v = LayoutInflater.from(service).inflate(R.layout.blocking_overlay, null)
+            val v = coverView()
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -58,7 +78,12 @@ class BlockingOverlayController(private val service: AccessibilityService) {
                 wm.addView(v, params)
                 view = v
                 shownAt = now
-                Log.d(TAG, "cover shown")
+                Log.d(TAG, "cover shown ${SystemClock.uptimeMillis() - requestedAt}ms after request")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    v.viewTreeObserver.registerFrameCommitCallback {
+                        Log.d(TAG, "cover on screen ${SystemClock.uptimeMillis() - requestedAt}ms after request")
+                    }
+                }
             } catch (t: Throwable) {
                 Log.w(TAG, "cover addView failed", t)
                 return
@@ -68,15 +93,15 @@ class BlockingOverlayController(private val service: AccessibilityService) {
         handler.postDelayed(hideRunnable, timing.onShow(now))
     }
 
-    /** The user is off the reel — take the cover down once it has been
-     *  up long enough not to flicker. */
-    fun hideSoon() {
+    /** One cover view, re-added on each block (removed views can be re-added). */
+    private fun coverView(): View =
+        inflated ?: LayoutInflater.from(service).inflate(R.layout.blocking_overlay, null).also { inflated = it }
+
+    private fun hideSoonNow() {
         val delay = timing.delayBeforeHideOnLanding(SystemClock.uptimeMillis()) ?: return
         handler.removeCallbacks(hideRunnable)
         handler.postDelayed(hideRunnable, delay)
     }
-
-    fun hide() = hideNow()
 
     private fun hideNow() {
         handler.removeCallbacks(hideRunnable)
