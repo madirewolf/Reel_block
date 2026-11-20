@@ -67,10 +67,15 @@ class SessionStateMachine {
      * non-DM Instagram surface such as Home, Explore, or Profile. That
      * clears any stale "came from DM" context so opening a reel from
      * those screens is blocked.
+     *
+     * Returns true when this ended a block (mode was BLOCKING), so the
+     * caller knows the navigation landed and the cover can come down.
      */
-    fun noteStableNonDmSurface() {
+    fun noteStableNonDmSurface(): Boolean {
+        val wasBlocking = mode == Mode.BLOCKING
         resetSession()
         lastKnownScreen = ScreenType.OTHER
+        return wasBlocking
     }
 
     /**

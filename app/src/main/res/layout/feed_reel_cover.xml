@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Box drawn over a reel inside the Home feed ("Hide reels in Home
+     feed"). Not touchable: the feed scrolls underneath it. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/rb_cover"
+    android:clickable="false"
+    android:focusable="false"
+    android:importantForAccessibility="noHideDescendants">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.02"
+        android:text="@string/feed_reel_hidden"
+        android:textColor="@color/rb_cover_text"
+        android:textSize="15sp" />
+</FrameLayout>

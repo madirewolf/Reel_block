@@ -1,5 +1,6 @@
 package com.reelblock.app
 
+import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 
 /**
@@ -18,11 +19,22 @@ data class NodeSnapshot(
     val isSelected: Boolean,
     val isScrollable: Boolean,
     val children: List<NodeSnapshot>,
+    /**
+     * False for views laid out but not on screen. Instagram keeps every
+     * main tab's page (Reels, Messages, Profile, ...) in its tab pager
+     * at all times; only the current one is visible. Reading the hidden
+     * pages made Home look like a reel viewer and pulled reel authors
+     * from the hidden Reels page.
+     */
+    val isVisibleToUser: Boolean = true,
 ) {
-    /** Depth-first iteration including this node. */
+    /** Depth-first iteration over this node and its on-screen
+     *  descendants. Hidden subtrees are skipped. */
     fun flatten(): Sequence<NodeSnapshot> = sequence {
         yield(this@NodeSnapshot)
-        children.forEach { yieldAll(it.flatten()) }
+        children.forEach { child ->
+            if (child.isVisibleToUser) yieldAll(child.flatten())
+        }
     }
 
     companion object {
@@ -59,10 +71,15 @@ private fun copyNode(node: AccessibilityNodeInfo, depth: Int, maxDepth: Int): No
         buildList(node.childCount) {
             for (i in 0 until node.childCount) {
                 val child = try {
-                    node.getChild(i)
+                    fetchChild(node, i)
                 } catch (_: Throwable) {
                     null
                 } ?: continue
+                // Off-screen subtrees (hidden tab pages, the screen under
+                // a full-screen viewer) are skipped: they are never what
+                // the user is looking at, and copying them is most of the
+                // cost of a tree walk.
+                if (!child.isVisibleToUser) continue
                 add(copyNode(child, depth + 1, maxDepth))
             }
         }
@@ -75,5 +92,25 @@ private fun copyNode(node: AccessibilityNodeInfo, depth: Int, maxDepth: Int): No
         isSelected = node.isSelected,
         isScrollable = node.isScrollable,
         children = children,
+        isVisibleToUser = node.isVisibleToUser,
     )
 }
+
+/**
+ * Prefetch flags for tree walks. Every getChild is an IPC to Instagram's
+ * UI thread. By default the system's batch prefetch is interruptible:
+ * our very next getChild cancels it, so each node cost its own round
+ * trip. On the Messages screen, where Instagram's UI thread is busy, that
+ * made one walk take ~1.8 s and held up blocking behind it. Asking for
+ * an uninterruptible batch brings up to 50 nodes back per IPC.
+ */
+internal val WALK_PREFETCH: Int =
+    AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID or
+        AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE
+
+private fun fetchChild(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        node.getChild(index, WALK_PREFETCH)
+    } else {
+        node.getChild(index)
+    }

@@ -12,7 +12,7 @@
         android:layout_height="wrap_content"
         android:background="@color/rb_bg"
         app:titleTextColor="@color/rb_on_surface"
-        android:title="@string/detection_log_title" />
+        app:title="@string/detection_log_title" />
 
     <TextView
         android:id="@+id/empty_state"
@@ -44,7 +44,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_share"
-            style="@style/Widget.Material3.Button"
+            style="@style/Widget.ReelBlock.Button"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginEnd="8dp"
@@ -53,7 +53,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_clear"
-            style="@style/Widget.Material3.Button.TonalButton"
+            style="@style/Widget.ReelBlock.Button.Outlined"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"

@@ -26,6 +26,12 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_ALLOW_DM_REELS, true)
         set(value) = prefs.edit().putBoolean(KEY_ALLOW_DM_REELS, value).apply()
 
+    /** When true, reels that play inside the Home feed are covered by an
+     *  opaque box. Opening one is blocked either way. */
+    var hideFeedReels: Boolean
+        get() = prefs.getBoolean(KEY_HIDE_FEED_REELS, true)
+        set(value) = prefs.edit().putBoolean(KEY_HIDE_FEED_REELS, value).apply()
+
     fun registerListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
         prefs.registerOnSharedPreferenceChangeListener(listener)
     }
@@ -38,5 +44,6 @@ class SettingsStore(context: Context) {
         const val PREFS_NAME = "reel_block_prefs"
         const val KEY_BLOCKING_ENABLED = "blocking_enabled"
         const val KEY_ALLOW_DM_REELS = "allow_dm_reels"
+        const val KEY_HIDE_FEED_REELS = "hide_feed_reels"
     }
 }
