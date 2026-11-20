@@ -103,6 +103,63 @@ object NodeSnapshotFactory {
         )
     }
 
+    /**
+     * Instagram 457's long-press preview of an Explore tile, as the main
+     * window reports it: the grid with the Search tab selected, and a
+     * `peek_container` over it playing the post. Checked against a live
+     * Galaxy S24 tree.
+     */
+    fun ig457ExplorePeek(video: Boolean): NodeSnapshot {
+        val media = if (video) {
+            node(id = IG + "media_group", children = listOf(
+                node(className = "android.view.TextureView"),
+                node(id = IG + "row_feed_media_actions", children = listOf(
+                    node(id = IG + "video_states", children = listOf(
+                        node(id = IG + "countdown_timer", className = "android.widget.TextView"),
+                    )),
+                )),
+                node(id = IG + "indicator_container", contentDescription = "Turn sound on"),
+            ))
+        } else {
+            node(id = IG + "media_group", children = listOf(
+                node(id = IG + "row_feed_photo_imageview", className = "android.widget.ImageView"),
+            ))
+        }
+        val peek = node(
+            id = IG + "peek_container",
+            children = listOf(
+                node(id = IG + "media_container", children = listOf(
+                    node(
+                        id = IG + "row_feed_profile_header",
+                        contentDescription = if (video) "some.author posted a video" else "some.author posted a photo",
+                    ),
+                    media,
+                )),
+                node(id = IG + "like_heart", className = "android.widget.ImageView"),
+            ),
+        )
+        val grid = node(id = "android:id/list", isScrollable = true, children = listOf(
+            node(id = IG + "grid_card_layout_container", contentDescription = "Reel by some.author at row 2, column 2"),
+            node(id = IG + "grid_card_layout_container", contentDescription = "Photo by other.author at row 2, column 3"),
+        ))
+        return node(
+            id = IG + "main_container",
+            children = listOf(grid, peek, ig457TabBar(ReelDetector.TAB_SEARCH)),
+        )
+    }
+
+    /** The preview's menu: a separate popup window that has focus. */
+    fun ig457PeekMenu(): NodeSnapshot = node(
+        className = "android.widget.FrameLayout",
+        children = listOf(
+            node(id = IG + "context_menu", children = listOf(
+                node(id = IG + "context_menu_options_list", children = listOf(
+                    "Like", "Share", "View profile", "Repost", "Not interested", "Report",
+                ).map { node(id = IG + "context_menu_item", contentDescription = it) }),
+            )),
+        ),
+    )
+
     // ---- Prefabs that look like real Instagram screens ----
 
     fun reelsTabScreen(reelAuthor: String = "first.author"): NodeSnapshot = node(

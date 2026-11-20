@@ -18,6 +18,7 @@ Runs entirely on-device. No network calls, no analytics, nothing leaves the phon
 - Leave Instagram and come back: state resets.
 - The DM exemption is a switch on the home screen. Turn it off and every reel is blocked, DM-shared or not.
 - Reels in the Home feed are covered as you scroll. That is its own switch, on by default.
+- Holding a reel tile on Explore (the long-press preview): blocked, even with your finger still down. Photo previews stay.
 
 The app screen is a three-step setup (turn on the accessibility service, allow notifications, keep it running) and three options:
 
@@ -64,6 +65,8 @@ The subtlety is which signatures are allowed to trigger that comparison. A signa
 The obvious way to snapshot the screen is `rootInActiveWindow`. It is frequently null during window transitions ([issuetracker #223809542](https://issuetracker.google.com/issues/223809542)), which is precisely when a Reels screen is being pushed, and on Samsung it can even report the launcher while Instagram is in front.
 
 The service reads `rootInActiveWindow` when it really is Instagram's window (a full, fresh tree) and falls back to the event's own `event.source` subtree when it is not. Which source produced a given snapshot is recorded in the detection log, so a misclassification can be traced back to whether the tree was even available.
+
+One screen needs a second window. Holding a tile on Explore opens a preview (`peek_container`) in Instagram's main window and a Like/Share menu in a separate popup window, and the popup has focus. When the active window is that menu, the service finds the preview in the main window through `getWindows()` and classifies it. A preview holding a video surface or player ids is a reel, whatever tab is selected under it; BACK closes it even while the finger is down.
 
 ### Blocking is a sequence, and it verifies itself
 
@@ -190,7 +193,7 @@ Instagram's resource IDs rotate across releases. If blocking feels off on a new 
 
 Ids are matched on the part after `com.instagram.android:id/`.
 
-Instagram 457 (late 2026) renamed the bottom bar to `tab_bar`, made Messages a tab, keeps every tab's page mounted (so hidden pages are skipped), and calls stories `reel_*` and Reels `clips_*`.
+Instagram 457 (late 2026) renamed the bottom bar to `tab_bar`, made Messages a tab, keeps every tab's page mounted (so hidden pages are skipped), and calls stories `reel_*` and Reels `clips_*`. Its long-press preview is `peek_container`, with its menu in `context_menu`.
 
 ---
 
@@ -223,7 +226,7 @@ app/src/test/java/com/reelblock/app/
   ReelDetectorTest.kt                 classification
   SessionStateMachineTest.kt          every transition and edge case
   DetectorStateMachineIntegrationTest.kt
-  Instagram457Test.kt                 the 457 tab bar and hidden pages
+  Instagram457Test.kt                 the 457 tab bar, hidden pages, Explore preview
   FeedReelRectsTest.kt                which feed boxes are reels
   DmReelSwipeTest.kt, CoverPolicyTest.kt
   CoverTimingTest.kt, InstagramPresenceTest.kt, SelfTabClickEchoTest.kt

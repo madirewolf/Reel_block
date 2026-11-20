@@ -103,6 +103,46 @@ class Instagram457Test {
     }
 
     @Test
+    fun `a long-press preview playing a reel on Explore is a reel`() {
+        // Bug: holding a reel tile on Explore played it in a preview. The
+        // Search tab stays selected under it, so it read as OTHER.
+        val screen = NodeSnapshotFactory.ig457ExplorePeek(video = true)
+        assertThat(ReelDetector.detectScreen(screen)).isEqualTo(ScreenType.REEL_VIEWER)
+    }
+
+    @Test
+    fun `a long-press preview of a photo is left alone`() {
+        val screen = NodeSnapshotFactory.ig457ExplorePeek(video = false)
+        assertThat(ReelDetector.detectScreen(screen)).isEqualTo(ScreenType.OTHER)
+    }
+
+    @Test
+    fun `the preview read on its own is a reel too`() {
+        // With the menu focused, the service reads just the preview node.
+        val peek = NodeSnapshotFactory.ig457ExplorePeek(video = true).flatten()
+            .first { it.viewIdResourceName == IG + "peek_container" }
+        assertThat(ReelDetector.detectScreen(peek)).isEqualTo(ScreenType.REEL_VIEWER)
+    }
+
+    @Test
+    fun `the preview's menu window points at the preview behind it`() {
+        assertThat(ReelDetector.isPeekMenu(NodeSnapshotFactory.ig457PeekMenu())).isTrue()
+        assertThat(ReelDetector.detectScreen(NodeSnapshotFactory.ig457PeekMenu())).isEqualTo(ScreenType.OTHER)
+        assertThat(ReelDetector.isPeekMenu(NodeSnapshotFactory.ig457MainScreen(ReelDetector.TAB_SEARCH))).isFalse()
+        assertThat(ReelDetector.isPeekMenu(NodeSnapshotFactory.ig457ExplorePeek(video = true))).isFalse()
+        assertThat(ReelDetector.isPeekMenu(null)).isFalse()
+    }
+
+    @Test
+    fun `browsing Explore then holding a reel tile blocks it`() {
+        val sm = SessionStateMachine()
+        sm.handleScreen(ReelDetector.detectScreen(NodeSnapshotFactory.ig457MainScreen(ReelDetector.TAB_SEARCH)), null)
+        val peek = NodeSnapshotFactory.ig457ExplorePeek(video = true)
+        val action = sm.handleScreen(ReelDetector.detectScreen(peek), ReelDetector.extractReelSignature(peek))
+        assertThat(action).isEqualTo(SessionStateMachine.Action.BLOCK_REEL)
+    }
+
+    @Test
     fun `non click events are not tab taps`() {
         val type = ReelDetector.classifyByBottomNavEvent(
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "Reels", IG + "clips_tab",

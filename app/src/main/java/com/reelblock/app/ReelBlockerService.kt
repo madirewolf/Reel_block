@@ -492,6 +492,14 @@ class ReelBlockerService : AccessibilityService() {
                 }
                 selection = selectInstagramNode(rootNode, sourceNode)
                 snapshot = selection.node?.toSnapshot()
+                // A long-press preview's menu has focus: the preview
+                // itself is behind it, in Instagram's main window.
+                if (ReelDetector.isPeekMenu(snapshot)) {
+                    peekBehindMenu()?.let { (peekNode, peekSnapshot) ->
+                        selection = selection.copy(node = peekNode, sourceLabel = "peek")
+                        snapshot = peekSnapshot
+                    }
+                }
             } catch (t: Throwable) {
                 Log.w(TAG, "tree read failed", t)
             }
@@ -1321,7 +1329,11 @@ class ReelBlockerService : AccessibilityService() {
             screen = lastBlockScreen ?: ScreenType.REEL_VIEWER
             route = "retryBlindBack"
         } else {
-            screen = ReelDetector.detectScreen(root.toSnapshot())
+            val rootSnapshot = root.toSnapshot()
+            val readSnapshot = if (ReelDetector.isPeekMenu(rootSnapshot)) {
+                peekBehindMenu()?.second ?: rootSnapshot
+            } else rootSnapshot
+            screen = ReelDetector.detectScreen(readSnapshot)
             if (screen != ScreenType.REELS_TAB && screen != ScreenType.REEL_VIEWER) {
                 // Navigation landed. Let the normal event flow reset the
                 // mode; the cover can come down now.
@@ -1487,6 +1499,36 @@ class ReelBlockerService : AccessibilityService() {
             else ->
                 NodeSelection(null, "none", rootPackageName, sourcePackageName)
         }
+    }
+
+    /**
+     * The long-press preview in Instagram's main window, read while its
+     * menu (a popup window) has focus. Null when there is none.
+     */
+    private fun peekBehindMenu(): Pair<AccessibilityNodeInfo, NodeSnapshot>? {
+        val all = try { windows } catch (_: Throwable) { null } ?: return null
+        for (window in all) {
+            if (window.isActive || window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            val root = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    window.getRoot(WALK_PREFETCH)
+                } else {
+                    window.root
+                }
+            } catch (_: Throwable) {
+                null
+            } ?: continue
+            val pkg = root.packageName?.toString().orEmpty()
+            if (!isInstagramPackage(pkg)) continue
+            val peek = try {
+                root.findAccessibilityNodeInfosByViewId("$pkg:id/${ReelDetector.PEEK_CONTAINER_ID}")
+            } catch (_: Throwable) {
+                null
+            }?.firstOrNull { it.isVisibleToUser } ?: continue
+            val snapshot = peek.toSnapshot() ?: continue
+            return peek to snapshot
+        }
+        return null
     }
 
     private fun currentInstagramRoot(): AccessibilityNodeInfo? {

@@ -219,6 +219,21 @@ object ReelDetector {
     )
 
     /**
+     * Long-press preview ("peek") of a grid tile, Instagram 457. Holding a
+     * tile on Explore (or a profile grid) opens `peek_container` over the
+     * grid and plays the post in it, with a Like/Share/... menu in a
+     * separate popup window. The Search tab stays selected underneath,
+     * so the preview read as OTHER and the reel played.
+     */
+    const val PEEK_CONTAINER_ID = "peek_container"
+
+    /** The preview's menu, in its own popup window that has focus. */
+    private val PEEK_MENU_ID_SEGMENTS = setOf("context_menu", "context_menu_options_list")
+
+    /** Video player parts inside a preview; a photo preview has none. */
+    private val PEEK_VIDEO_ID_SEGMENTS = setOf("video_states", "countdown_timer")
+
+    /**
      * Ids that identify the STORY viewer. Instagram's internal name for
      * stories is "reel" (singular — the stories tray is `reels_tray`),
      * while actual Reels are "clips". A Galaxy S24 log showed the story
@@ -339,6 +354,10 @@ object ReelDetector {
     fun detectScreen(root: NodeSnapshot?): ScreenType {
         if (root == null) return ScreenType.UNKNOWN
         val nodes = root.flatten().toList()
+
+        // 0. A long-press preview playing a video is a reel on screen,
+        //    whatever tab is selected under it.
+        if (hasVideoPeek(nodes)) return ScreenType.REEL_VIEWER
 
         // 1. Authoritative: which bottom-nav tab is currently selected?
         //    [extractSelectedBottomTabFromNodes] *prefers a non-reels
@@ -636,6 +655,27 @@ object ReelDetector {
         }
         return seen.size
     }
+
+    private fun idSegment(node: NodeSnapshot): String? =
+        node.viewIdResourceName?.lowercase()?.substringAfterLast('/')
+
+    /** True when [nodes] hold a long-press preview that plays a video:
+     *  a video surface or player ids in it, or a "posted a video" header. */
+    private fun hasVideoPeek(nodes: List<NodeSnapshot>): Boolean =
+        nodes.filter { idSegment(it) == PEEK_CONTAINER_ID }.any { peek ->
+            val inside = peek.flatten().toList()
+            hasVideoSurface(inside) ||
+                inside.any { idSegment(it) in PEEK_VIDEO_ID_SEGMENTS } ||
+                inside.any {
+                    idSegment(it) == FEED_HEADER_ID &&
+                        FEED_VIDEO_HEADER.containsMatchIn(it.contentDescription.orEmpty())
+                }
+        }
+
+    /** True when [root] is the menu window of a long-press preview; the
+     *  preview itself is then in Instagram's main window, behind it. */
+    fun isPeekMenu(root: NodeSnapshot?): Boolean =
+        root != null && root.flatten().any { idSegment(it) in PEEK_MENU_ID_SEGMENTS }
 
     private fun hasVideoSurface(nodes: List<NodeSnapshot>): Boolean {
         return nodes.any { node ->
