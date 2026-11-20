@@ -3,40 +3,21 @@
      opaque so the reel is never visible while the service navigates
      away, and not touchable / not focusable so it can never intercept
      input or steal focus from Instagram. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/rb_bg"
-    android:gravity="center"
-    android:orientation="vertical"
     android:clickable="false"
     android:focusable="false"
     android:importantForAccessibility="noHideDescendants">
-
-    <ImageView
-        android:layout_width="56dp"
-        android:layout_height="56dp"
-        android:contentDescription="@null"
-        android:src="@drawable/ic_shield" />
 
     <TextView
         android:id="@+id/blocking_title"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_gravity="center"
+        android:fontFamily="sans-serif-medium"
         android:text="@string/reel_blocked_title"
         android:textColor="@color/rb_on_surface"
-        android:textSize="22sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/blocking_subtitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:paddingHorizontal="32dp"
-        android:gravity="center"
-        android:text="@string/reel_blocked_subtitle"
-        android:textColor="@color/rb_on_surface_muted"
-        android:textSize="14sp" />
-</LinearLayout>
+        android:textSize="20sp" />
+</FrameLayout>

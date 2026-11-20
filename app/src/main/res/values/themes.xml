@@ -4,19 +4,113 @@
         <item name="android:windowExitAnimation">@anim/banner_slide_out_top</item>
     </style>
 
-    <style name="Theme.ReelBlock" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- Dark only, square corners, system sans-serif. -->
+    <style name="Theme.ReelBlock" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/rb_primary</item>
-        <item name="colorOnPrimary">@color/rb_on_surface</item>
-        <item name="colorPrimaryContainer">@color/rb_primary_variant</item>
-        <item name="colorSecondary">@color/rb_accent</item>
-        <item name="colorSurface">@color/rb_surface</item>
+        <item name="colorOnPrimary">@color/rb_on_primary</item>
+        <item name="colorPrimaryContainer">@color/rb_surface_variant</item>
+        <item name="colorOnPrimaryContainer">@color/rb_on_surface</item>
+        <item name="colorSecondary">@color/rb_on_surface_muted</item>
+        <item name="colorSecondaryContainer">@color/rb_surface_variant</item>
+        <item name="colorOnSecondaryContainer">@color/rb_on_surface</item>
+        <item name="colorSurface">@color/rb_bg</item>
         <item name="colorSurfaceVariant">@color/rb_surface_variant</item>
         <item name="colorOnSurface">@color/rb_on_surface</item>
         <item name="colorOnSurfaceVariant">@color/rb_on_surface_muted</item>
+        <item name="colorOutline">@color/rb_line</item>
         <item name="android:colorBackground">@color/rb_bg</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="fontFamily">sans-serif</item>
         <item name="android:statusBarColor">@color/rb_bg</item>
         <item name="android:navigationBarColor">@color/rb_bg</item>
         <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+        <item name="materialButtonStyle">@style/Widget.ReelBlock.Button</item>
+        <item name="toolbarStyle">@style/Widget.ReelBlock.Toolbar</item>
+    </style>
+
+    <style name="Widget.ReelBlock.Button" parent="Widget.Material3.Button">
+        <item name="cornerRadius">0dp</item>
+        <item name="backgroundTint">@color/rb_primary</item>
+        <item name="android:textColor">@color/rb_on_primary</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:minHeight">40dp</item>
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
+    </style>
+
+    <style name="Widget.ReelBlock.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="cornerRadius">0dp</item>
+        <item name="strokeColor">@color/rb_line</item>
+        <item name="android:textColor">@color/rb_on_surface</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:minHeight">44dp</item>
+    </style>
+
+    <style name="Widget.ReelBlock.Toolbar" parent="Widget.Material3.Toolbar">
+        <item name="titleTextAppearance">@style/TextAppearance.ReelBlock.ToolbarTitle</item>
+    </style>
+
+    <style name="TextAppearance.ReelBlock.ToolbarTitle" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">@color/rb_on_surface</item>
+        <item name="android:textSize">18sp</item>
+    </style>
+
+    <!-- Text roles. Three sizes, two colours. -->
+    <style name="RB.Title" parent="">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">@color/rb_on_surface</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <style name="RB.Body" parent="">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">@color/rb_on_surface_muted</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:lineSpacingExtra">2dp</item>
+    </style>
+
+    <style name="RB.Section" parent="">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">@color/rb_on_surface_muted</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:letterSpacing">0.12</item>
+        <item name="android:textAllCaps">true</item>
+    </style>
+
+    <style name="RB.StepNumber" parent="">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+    <style name="RB.Divider" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/rb_line</item>
+    </style>
+
+    <style name="RB.Switch" parent="">
+        <item name="android:thumb">@drawable/switch_thumb</item>
+        <item name="track">@drawable/switch_track</item>
+        <item name="showText">false</item>
+        <!-- AppCompat tints the track and thumb by default; multiply by
+             white keeps the drawables' own colours. -->
+        <item name="thumbTint">@color/rb_white</item>
+        <item name="thumbTintMode">multiply</item>
+        <item name="trackTint">@color/rb_white</item>
+        <item name="trackTintMode">multiply</item>
+        <item name="android:background">@null</item>
     </style>
 </resources>

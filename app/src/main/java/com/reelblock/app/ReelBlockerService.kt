@@ -126,6 +126,9 @@ class ReelBlockerService : AccessibilityService() {
     private var onHomeFeed = false
     private var feedRefreshPosted = false
     private var feedCoverCountLogged = -1
+    private val isDebugBuild by lazy {
+        (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
     private val feedRefreshRunnable = Runnable { refreshFeedReelCovers() }
     private var treeWalkPosted = false
     private val treeWalkRunnable = Runnable { runPendingTreeWalk() }
@@ -1645,6 +1648,10 @@ class ReelBlockerService : AccessibilityService() {
             getString(R.string.notif_title_active)
         else
             getString(R.string.notif_title_paused)
+        val text = if (settings.blockingEnabled)
+            getString(R.string.notif_text_active)
+        else
+            getString(R.string.notif_text_paused)
 
         val summary = buildString {
             append("events=")
@@ -1665,7 +1672,11 @@ class ReelBlockerService : AccessibilityService() {
             }
         }
 
-        val bigText = buildString {
+        // Detection details only on debug builds, and only when the
+        // notification is expanded; the collapsed line stays plain.
+        val bigText = if (!isDebugBuild) text else buildString {
+            append(text)
+            append('\n')
             append(summary)
             if (!diagnostics.isNullOrBlank()) {
                 append('\n')
@@ -1679,7 +1690,7 @@ class ReelBlockerService : AccessibilityService() {
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_shield)
             .setContentTitle(title)
-            .setContentText(summary)
+            .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(bigText))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
