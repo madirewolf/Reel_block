@@ -24,6 +24,12 @@ local.properties
 *.jks
 captures/
 
+# release signing (passwords)
+keystore.properties
+
+# netlify cli link state
+.netlify/
+
 # --- pre-existing ---
 *.iml
 .gradle

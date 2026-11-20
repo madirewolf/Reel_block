@@ -36,10 +36,33 @@ class BlockingOverlayController(private val service: AccessibilityService) {
     private val hideRunnable = Runnable { hideNow() }
     private var shownAt = 0L
 
+    /** True while the cover is on screen. Written on the overlay thread. */
+    @Volatile
+    var isShowing = false
+        private set
+
     /** Inflate the cover ahead of time. The first block after the service
      *  starts took ~120 ms to inflate it; a warm one takes ~10 ms. */
     fun warmUp() {
         handler.post { coverView() }
+    }
+
+    /** The block screen's look changed in settings; restyle the cover
+     *  now, off the main thread, so the next block shows it at once. */
+    fun reloadStyle() {
+        handler.post { inflated?.let { applyStyle(it) } }
+    }
+
+    private fun applyStyle(v: View) {
+        val settings = SettingsStore(service)
+        val style = settings.coverStyle
+        val photo = if (style == CoverStyle.PHOTO) CoverLook.loadPhoto(service) else null
+        CoverLook.apply(
+            service, v,
+            v.findViewById(R.id.blocking_photo),
+            v.findViewById(R.id.blocking_title),
+            style, settings.coverColor, photo,
+        )
     }
 
     fun showBlocked() {
@@ -77,6 +100,7 @@ class BlockingOverlayController(private val service: AccessibilityService) {
             try {
                 wm.addView(v, params)
                 view = v
+                isShowing = true
                 shownAt = now
                 Log.d(TAG, "cover shown ${SystemClock.uptimeMillis() - requestedAt}ms after request")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -95,7 +119,10 @@ class BlockingOverlayController(private val service: AccessibilityService) {
 
     /** One cover view, re-added on each block (removed views can be re-added). */
     private fun coverView(): View =
-        inflated ?: LayoutInflater.from(service).inflate(R.layout.blocking_overlay, null).also { inflated = it }
+        inflated ?: LayoutInflater.from(service).inflate(R.layout.blocking_overlay, null).also {
+            applyStyle(it)
+            inflated = it
+        }
 
     private fun hideSoonNow() {
         val delay = timing.delayBeforeHideOnLanding(SystemClock.uptimeMillis()) ?: return
@@ -108,6 +135,7 @@ class BlockingOverlayController(private val service: AccessibilityService) {
         timing.onHidden()
         val v = view ?: return
         view = null
+        isShowing = false
         Log.d(TAG, "cover hidden after ${SystemClock.uptimeMillis() - shownAt}ms")
         try {
             service.getSystemService(WindowManager::class.java)?.removeViewImmediate(v)

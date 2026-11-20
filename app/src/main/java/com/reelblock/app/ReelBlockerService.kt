@@ -14,10 +14,13 @@ import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.graphics.Rect
+import android.graphics.drawable.Icon
+import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -44,9 +47,8 @@ import androidx.core.content.ContextCompat
  * live, which is what resets state between visits.
  *
  * Every handled event is recorded to [DetectionLog] along with a
- * diagnostic summary, **and mirrored into an ongoing status
- * notification** so the user can see the live state without leaving
- * Instagram.
+ * diagnostic summary. A plain ongoing notification says whether
+ * blocking is on and offers a one-minute pause.
  */
 class ReelBlockerService : AccessibilityService() {
 
@@ -61,14 +63,15 @@ class ReelBlockerService : AccessibilityService() {
     private var lastBlockAt: Long = 0L
     private var lastBlockScreen: ScreenType? = null
 
-    /** Running count of every accessibility event we've been handed,
-     *  regardless of package. Surfaces in the notification so a growing
-     *  counter proves the service is alive even before the user opens
-     *  Instagram. */
-    private var eventCount: Long = 0L
-
     /** Most recent non-Reels bottom-nav tab seen inside Instagram. */
     private var lastNonReelsBottomTab: String? = null
+
+    /** Most recent bottom tab seen selected, the Reels tab included:
+     *  where a reel on screen was opened from. */
+    private var lastSelectedTab: String? = null
+
+    /** Whose profile the user is on; see [ProfileContextTracker]. */
+    private val profileTracker = ProfileContextTracker()
 
     /** Timestamp when a DM-launched reel became allowed. */
     private var dmAllowedSinceMs: Long = 0L
@@ -84,11 +87,6 @@ class ReelBlockerService : AccessibilityService() {
      *  fired en masse while another window covers Instagram. */
     private var lastNullTreeRecordAt: Long = 0L
     private var suppressedNullTreeEvents: Int = 0
-
-    /** Last time the status notification was actually posted — used to
-     *  throttle the ~600 updates/sec Instagram's event storms would
-     *  otherwise cause. */
-    private var lastNotifPostAt: Long = 0L
 
     /** Dedupe for repeated identical log entries — a reel playing on a
      *  blocked screen fires ~50 identical events/sec, which previously
@@ -137,9 +135,6 @@ class ReelBlockerService : AccessibilityService() {
         feedHold.release()
         if (onHomeFeed) scheduleFeedRefresh() else feedCovers.clear()
     }
-    private val isDebugBuild by lazy {
-        (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-    }
     private val feedRefreshRunnable = Runnable { refreshFeedReelCovers() }
     /** A tree read is running on [ReadThreads.tree]. Main thread only. */
     private var treeReadInFlight = false
@@ -157,35 +152,54 @@ class ReelBlockerService : AccessibilityService() {
     private var presenceWatchActive = false
     private val presenceCheck = Runnable { checkInstagramPresence() }
 
+    /**
+     * Instagram is not in front (Home, recents, another app, the shade,
+     * the lock screen). Every cover is down and stays down, and events
+     * are not acted on, until Instagram has focus again.
+     */
+    private var igAway = false
+    private var screenOff = false
+    /** Instagram's window was still on screen at the last check (under the shade, say). */
+    private var igVisibleBehind = false
+    /** The last Instagram event ignored while away, looked at again on return. */
+    private var awayDroppedEvent: AccessibilityEvent? = null
+    /** Windows Instagram's events came from, newest last. Main thread only. */
+    private val igWindowIds = LinkedHashSet<Int>()
+    /** The last non-Instagram app window seen in front, so polls skip re-reading it. */
+    private var lastAwayWindowId = -1
+    private var guardTickPosted = false
+    private var frontCheckInFlight = false
+    private var lastFrontCheckAt = 0L
+    private val guardTick = Runnable {
+        guardTickPosted = false
+        requestFrontCheck()
+    }
+    private var screenReceiver: BroadcastReceiver? = null
+    private var displayListener: DisplayManager.DisplayListener? = null
+    /** Turns blocking back on when a pause from the notification ends. */
+    private val pauseEnd = Runnable { onPauseEnded() }
+
     /** Debug builds only — see [DebugTreeDump]. */
     private var debugDumpReceiver: BroadcastReceiver? = null
 
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        when (key) {
-            SettingsStore.KEY_BLOCKING_ENABLED -> {
-                if (!settings.blockingEnabled) {
-                    stateMachine.reset()
-                    clearBlockingCooldown()
-                    overlay.hide()
-                    endFeedHold()
-                    feedCovers.clear()
-                } else {
-                    scheduleFeedRefresh()
-                }
-                updateStatusNotification(note = if (settings.blockingEnabled) "blocking on" else "blocking off", force = true)
-            }
-            SettingsStore.KEY_HIDE_FEED_REELS -> {
-                if (settings.hideFeedReels) {
-                    scheduleFeedRefresh()
-                } else {
-                    endFeedHold()
-                    feedCovers.clear()
+        val changed = key ?: return@OnSharedPreferenceChangeListener
+        when {
+            changed == SettingsStore.KEY_BLOCKING_ENABLED ||
+                changed == SettingsStore.KEY_PAUSED_UNTIL -> applyActiveState()
+            changed in SettingsStore.POLICY_KEYS -> {
+                syncPolicy()
+                if (changed == SettingsStore.KEY_BLOCK_HOME_REELS) {
+                    if (settings.blockHomeReels) {
+                        scheduleFeedRefresh()
+                    } else {
+                        endFeedHold()
+                        feedCovers.clear()
+                    }
                 }
             }
-            SettingsStore.KEY_ALLOW_DM_REELS -> {
-                stateMachine.allowDmReels = settings.allowDmReels
-                updateStatusNotification(note = if (settings.allowDmReels) "dm reels allowed" else "dm reels blocked", force = true)
-            }
+            changed in SettingsStore.COVER_KEYS -> overlay.reloadStyle()
+            changed == SettingsStore.KEY_SHOW_NOTIFICATION -> updateStatusNotification()
         }
     }
 
@@ -223,10 +237,46 @@ class ReelBlockerService : AccessibilityService() {
         overlay = BlockingOverlayController(this).also { it.warmUp() }
         feedCovers = FeedReelCovers(this)
         settings = SettingsStore(this)
-        stateMachine.allowDmReels = settings.allowDmReels
+        syncPolicy()
         settings.registerListener(settingsListener)
         notifMgr = getSystemService(NotificationManager::class.java)
         ensureNotificationChannel()
+        schedulePauseEnd()
+    }
+
+    /** Copies the per-place switches into the state machine. */
+    private fun syncPolicy() {
+        stateMachine.blockReelsTab = settings.blockReelsTab
+        stateMachine.blockHomeReels = settings.blockHomeReels
+        stateMachine.blockExploreReels = settings.blockExploreReels
+        stateMachine.blockOwnProfileReels = settings.blockOwnProfileReels
+        stateMachine.allowDmReels = settings.allowDmReels
+    }
+
+    /** Blocking was turned on or off, paused or resumed. */
+    private fun applyActiveState() {
+        if (settings.isActive()) {
+            scheduleFeedRefresh()
+        } else {
+            stateMachine.reset()
+            clearBlockingCooldown()
+            overlay.hide()
+            endFeedHold()
+            feedCovers.clear()
+        }
+        schedulePauseEnd()
+        updateStatusNotification()
+    }
+
+    private fun schedulePauseEnd() {
+        handler.removeCallbacks(pauseEnd)
+        val left = settings.pausedUntil - System.currentTimeMillis()
+        if (left > 0) handler.postDelayed(pauseEnd, left + 50)
+    }
+
+    private fun onPauseEnded() {
+        // Clearing the pause reaches [applyActiveState] through the listener.
+        if (settings.pausedUntil != 0L) settings.pausedUntil = 0L else applyActiveState()
     }
 
     override fun onServiceConnected() {
@@ -237,7 +287,10 @@ class ReelBlockerService : AccessibilityService() {
         stateMachine.reset()
         clearBlockingCooldown()
         lastNonReelsBottomTab = null
+        lastSelectedTab = null
+        profileTracker.reset()
         registerDebugDumpReceiver()
+        registerScreenReceiver()
         DetectionLog.record(
             DetectionLog.Entry(
                 timestamp = System.currentTimeMillis(),
@@ -250,12 +303,10 @@ class ReelBlockerService : AccessibilityService() {
                 diagnostics = configDiagnostics,
             )
         )
-        // Promote to foreground-visible via an ongoing notification — not
-        // a true FGS (AccessibilityService already has a privileged
-        // binding) but the ongoing flag gives OEM task-killers reason to
-        // leave us alone, and crucially gives the user a live readout of
-        // what the service sees without bouncing out of Instagram.
-        updateStatusNotification(note = "ready", diagnostics = configDiagnostics, force = true)
+        // An ongoing notification: not a true FGS (AccessibilityService
+        // already has a privileged binding), but the ongoing flag gives
+        // OEM task-killers reason to leave us alone.
+        updateStatusNotification()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -264,32 +315,34 @@ class ReelBlockerService : AccessibilityService() {
         val pkg = event.packageName?.toString() ?: return
         val eventClassName = event.className?.toString()
 
-        // Counter ticks for every single event — regardless of package —
-        // so the notification proves the service is alive even when
-        // Instagram isn't open. Without this, a dead service and an
-        // idle-on-the-home-screen service look identical.
-        eventCount += 1
-
         if (!isInstagramPackage(pkg)) {
             // Defensive only: the package filter means Android does not
             // deliver other apps' events, so leaving Instagram is caught
             // by the window-list poll in [checkInstagramPresence].
             resetSessionState()
-            updateStatusNotification(
-                screen = ScreenType.UNKNOWN,
-                action = SessionStateMachine.Action.NONE,
-                note = "idle (pkg=$pkg)",
-            )
             return
         }
 
         startPresenceWatch()
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
-            event.eventType == AccessibilityEvent.TYPE_VIEW_SELECTED ||
-            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
-        ) {
+        noteInstagramWindow(event.windowId)
+        val isTap = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SELECTED
+        if (isTap || event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             // Only the foreground app receives taps and scrolls.
             presence.onInstagramEvidence()
+        }
+        if (igAway) {
+            // A tap only reaches the app in front; anything else needs a look.
+            if (isTap && !screenOff) {
+                applyFrontVerdict(FrontWindow.Verdict.INSTAGRAM, event.windowId)
+            } else {
+                requestFrontCheck(throttled = true)
+            }
+            if (igAway) {
+                @Suppress("DEPRECATION")
+                awayDroppedEvent = AccessibilityEvent.obtain(event)
+                return
+            }
         }
 
         if (onHomeFeed) scheduleFeedRefresh()
@@ -314,7 +367,11 @@ class ReelBlockerService : AccessibilityService() {
             }
         } else null
         val navEventTab = if (isTapEvent) {
-            ReelDetector.bottomNavTabForEvent(event.contentDescription, tapSourceId)
+            ReelDetector.bottomNavTabForEvent(
+                event.contentDescription,
+                tapSourceId,
+                isClick = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED,
+            )
         } else null
         val rawNavEventScreen = ReelDetector.classifyByBottomNavEvent(
             event.eventType,
@@ -340,7 +397,13 @@ class ReelBlockerService : AccessibilityService() {
         // a few ms instead of waiting for the view tree to be walked.
         val fastScreen: ScreenType? = navEventScreen ?: ReelDetector.classifyByClassName(eventClassName)
 
-        if (!settings.blockingEnabled) {
+        if (navEventScreen != null && navEventTab != null) {
+            // A real tap on a bottom tab: the user is on that tab now.
+            profileTracker.onTabTap(navEventTab)
+            lastSelectedTab = navEventTab
+        }
+
+        if (!settings.isActive()) {
             // Still emit a log entry so the user can confirm events are
             // arriving even while paused; without this a "paused" app
             // looks identical to a "dead" app in the UI.
@@ -349,7 +412,7 @@ class ReelBlockerService : AccessibilityService() {
                 screen = fastScreen ?: ScreenType.UNKNOWN,
                 action = SessionStateMachine.Action.NONE,
                 signature = null,
-                diagnostics = "paused (blocking disabled) cls=$eventClassName",
+                diagnostics = "paused cls=$eventClassName",
                 treeSource = "none",
                 selectedBottomTab = null,
                 handleLatencyMs = System.currentTimeMillis() - handleStart,
@@ -361,7 +424,7 @@ class ReelBlockerService : AccessibilityService() {
         // A real tap on the Reels tab: cover now, before Instagram draws
         // the tab, and block without waiting for a tree that still shows
         // the old tab selected.
-        val freshReelsTap = CoverPolicy.isFreshReelsTabTap(
+        val freshReelsTap = settings.blockReelsTab && CoverPolicy.isFreshReelsTabTap(
             isTapEvent = isTapEvent,
             sourceViewId = tapSourceId,
             eventAgeMs = SystemClock.uptimeMillis() - event.eventTime,
@@ -380,7 +443,7 @@ class ReelBlockerService : AccessibilityService() {
             Log.d(TAG, "early cover: DM reel swipe idx=${event.toIndex} base=${dmReelBaseline?.index} age=${SystemClock.uptimeMillis() - event.eventTime}ms")
         }
         if (navEventTab != null) {
-            Log.d(TAG, "tap tab=$navEventTab type=${event.eventType} age=${SystemClock.uptimeMillis() - event.eventTime}ms fresh=$freshReelsTap")
+            Log.d(TAG, "tap tab=$navEventTab type=${event.eventType} age=${SystemClock.uptimeMillis() - event.eventTime}ms fresh=$freshReelsTap src=$tapSourceId cls=$eventClassName")
         }
 
         // If the fast path already says "reel viewer" or "reels tab", we
@@ -467,7 +530,7 @@ class ReelBlockerService : AccessibilityService() {
     private fun startTreeRead() {
         val event = pendingWalkEvent ?: return
         pendingWalkEvent = null
-        if (!settings.blockingEnabled) return
+        if (!settings.isActive() || igAway) return
         treeReadInFlight = true
         val handleStart = System.currentTimeMillis()
         val readStartedAt = SystemClock.uptimeMillis()
@@ -490,7 +553,12 @@ class ReelBlockerService : AccessibilityService() {
                     Log.w(TAG, "rootInActiveWindow threw", t)
                     null
                 }
-                selection = selectInstagramNode(rootNode, sourceNode)
+                val windowNode = if (isInstagramPackage(rootNode?.packageName?.toString().orEmpty())) {
+                    null
+                } else {
+                    focusedInstagramRoot()
+                }
+                selection = selectInstagramNode(rootNode, sourceNode, windowNode)
                 snapshot = selection.node?.toSnapshot()
                 // A long-press preview's menu has focus: the preview
                 // itself is behind it, in Instagram's main window.
@@ -536,7 +604,7 @@ class ReelBlockerService : AccessibilityService() {
         selection: NodeSelection,
         snapshot: NodeSnapshot?,
     ) {
-        if (!settings.blockingEnabled) return
+        if (!settings.isActive() || igAway) return
         val eventClassName = event.className?.toString()
 
         if (snapshot == null) {
@@ -587,8 +655,23 @@ class ReelBlockerService : AccessibilityService() {
         presence.onInstagramEvidence()
 
         val treeDebug = ReelDetector.inspectTree(snapshot)
-        val screen = ReelDetector.detectScreen(snapshot)
+        val wholeWindow = selection.sourceLabel == "root" || selection.sourceLabel == "window"
+        var screen = ReelDetector.detectScreen(snapshot)
+        // A read of one scrolled list has no tab bar around it, and a Home
+        // feed list could pass for a reel player: BACK then sent the feed
+        // to the top. From such a read only the player's own signs count.
+        if (selection.sourceLabel == "source" && screen == ScreenType.REEL_VIEWER &&
+            !ReelDetector.hasStrongReelMarkers(snapshot)
+        ) {
+            screen = ScreenType.UNKNOWN
+        }
         val selectedBottomTab = ReelDetector.extractSelectedBottomTab(snapshot)
+        if (!selectedBottomTab.isNullOrBlank()) lastSelectedTab = selectedBottomTab
+        if (wholeWindow && screen != ScreenType.REEL_VIEWER && screen != ScreenType.REELS_TAB &&
+            screen != ScreenType.UNKNOWN
+        ) {
+            profileTracker.onRead(ReelDetector.profilePageKind(snapshot), selectedBottomTab)
+        }
         // "Stable non-DM surface" = user is demonstrably outside of a DM
         // thread (any main-app tab is visible). Previously required a
         // *selectedBottomTab* read, which Samsung sometimes fails to
@@ -629,11 +712,17 @@ class ReelBlockerService : AccessibilityService() {
             lastBlockedScreenEventAt = System.currentTimeMillis()
         }
         val dmReelSwipe = isDmReelSwipeScroll(event, screen, priorMode)
+        val openedFromDm = screen == ScreenType.REEL_VIEWER && openedFromDm(snapshot)
 
         val action = if (dmReelSwipe) {
             stateMachine.onReelScroll()
         } else {
-            stateMachine.handleScreen(screen, signatureForStateMachine(screen, signature, priorMode))
+            stateMachine.handleScreen(
+                screen,
+                signatureForStateMachine(screen, signature, priorMode, openedFromDm),
+                reelOrigin(),
+                openedFromDm,
+            )
         }
         if (stableNonDmSurface) {
             stateMachine.noteStableNonDmSurface()
@@ -671,10 +760,10 @@ class ReelBlockerService : AccessibilityService() {
                 previous = onHomeFeed,
                 screen = screen,
                 selectedTab = selectedBottomTab,
-                wholeWindow = selection.sourceLabel == "root",
+                wholeWindow = wholeWindow,
                 tabBarSeen = hasMainTabBar,
             ),
-            "walk=$screen selTab=$selectedBottomTab src=${selection.sourceLabel} tabBar=$hasMainTabBar",
+            "walk=$screen selTab=$selectedBottomTab src=${selection.sourceLabel} tabBar=$hasMainTabBar profile=${profileTracker.context}",
         )
         val decisionTrace = describeDecision(
             decision = decision,
@@ -729,6 +818,7 @@ class ReelBlockerService : AccessibilityService() {
         var sourcePackageName: String? = null
         var treeDebug: ReelDetector.TreeDebug? = null
         var activeNode: AccessibilityNodeInfo? = null
+        var openedFromDm = false
 
         // Only bother snapshotting when we actually need a signature —
         // i.e. a reel viewer while we might be in DM-allowed mode, or
@@ -749,7 +839,12 @@ class ReelBlockerService : AccessibilityService() {
             } catch (_: Throwable) {
                 null
             }
-            val selection = selectInstagramNode(rootNode, sourceNode)
+            val windowNode = if (isInstagramPackage(rootNode?.packageName?.toString().orEmpty())) {
+                null
+            } else {
+                focusedInstagramRoot()
+            }
+            val selection = selectInstagramNode(rootNode, sourceNode, windowNode)
             treeSource = selection.sourceLabel
             rootPackageName = selection.rootPackageName
             sourcePackageName = selection.sourcePackageName
@@ -758,9 +853,11 @@ class ReelBlockerService : AccessibilityService() {
                 treeDebug = ReelDetector.inspectTree(snap)
                 signature = ReelDetector.extractReelSignature(snap)
                 selectedBottomTab = ReelDetector.extractSelectedBottomTab(snap)
+                if (!selectedBottomTab.isNullOrBlank()) lastSelectedTab = selectedBottomTab
                 if (!selectedBottomTab.isNullOrBlank() && selectedBottomTab != "reels") {
                     lastNonReelsBottomTab = selectedBottomTab
                 }
+                openedFromDm = screen == ScreenType.REEL_VIEWER && openedFromDm(snap)
                 val treeScreen = ReelDetector.detectScreen(snap)
                 if (treeScreen == ScreenType.DM_THREAD ||
                     treeScreen == ScreenType.DM_INBOX ||
@@ -786,7 +883,13 @@ class ReelBlockerService : AccessibilityService() {
         val action = if (dmReelSwipe) {
             stateMachine.onReelScroll()
         } else {
-            stateMachine.handleScreen(resolvedScreen, signatureForStateMachine(resolvedScreen, signature, priorMode))
+            val fromDm = openedFromDm && resolvedScreen == ScreenType.REEL_VIEWER
+            stateMachine.handleScreen(
+                resolvedScreen,
+                signatureForStateMachine(resolvedScreen, signature, priorMode, fromDm),
+                reelOrigin(),
+                fromDm,
+            )
         }
         if (stableNonDmSurface) {
             stateMachine.noteStableNonDmSurface()
@@ -893,6 +996,14 @@ class ReelBlockerService : AccessibilityService() {
             try { unregisterReceiver(it) } catch (_: Throwable) { /* ignore */ }
         }
         debugDumpReceiver = null
+        screenReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Throwable) { /* ignore */ }
+        }
+        screenReceiver = null
+        displayListener?.let {
+            try { getSystemService(DisplayManager::class.java)?.unregisterDisplayListener(it) } catch (_: Throwable) { /* ignore */ }
+        }
+        displayListener = null
         destroyed = true
         handler.removeCallbacksAndMessages(null)
         presenceWatchActive = false
@@ -930,12 +1041,14 @@ class ReelBlockerService : AccessibilityService() {
      * reels stay covered while the block bounces the user back to Home.
      */
     private fun showBlockCover() {
+        if (igAway) return
         overlay.showBlocked()
         if (feedCovers.isShowing) {
             feedHold.start(SystemClock.uptimeMillis())
             handler.removeCallbacks(feedHoldEnd)
             handler.postDelayed(feedHoldEnd, CoverPolicy.FEED_HOLD_MS)
         }
+        ensureCoverGuard()
     }
 
     private fun endFeedHold() {
@@ -980,6 +1093,7 @@ class ReelBlockerService : AccessibilityService() {
                     // feed uncovered.
                     if (rects.isNotEmpty() || !feedHold.isHeld(SystemClock.uptimeMillis())) {
                         feedCovers.show(rects)
+                        ensureCoverGuard()
                     }
                 }
                 if (feedRefreshAgain) {
@@ -992,7 +1106,7 @@ class ReelBlockerService : AccessibilityService() {
 
     /** False (after clearing what should go) when no feed boxes belong on screen. */
     private fun feedCoversWanted(): Boolean {
-        if (!settings.blockingEnabled || !settings.hideFeedReels) {
+        if (!settings.isActive() || !settings.blockHomeReels || igAway) {
             endFeedHold()
             feedCovers.clear()
             return false
@@ -1074,9 +1188,165 @@ class ReelBlockerService : AccessibilityService() {
                         diagnostics = "leftInstagram: state reset (foreground apps=$apps)",
                     )
                 )
-                updateStatusNotification(note = "idle (left Instagram)", force = true)
             }
         }
+    }
+
+    // ---- Cover guard: every cover comes down the moment Instagram leaves the front ----
+
+    /** Remembers which windows are Instagram's, so most checks need no tree read. */
+    private fun noteInstagramWindow(windowId: Int) {
+        if (windowId < 0) return
+        igWindowIds.remove(windowId)
+        igWindowIds.add(windowId)
+        while (igWindowIds.size > IG_WINDOW_MEMORY) igWindowIds.remove(igWindowIds.first())
+    }
+
+    /** Keeps checking the front window while a cover is up, or while Instagram sits behind the shade. */
+    private fun ensureCoverGuard() {
+        if (guardTickPosted || destroyed || screenOff) return
+        val wanted = feedCovers.isShowing || overlay.isShowing || (igAway && igVisibleBehind)
+        if (!wanted) return
+        guardTickPosted = true
+        handler.postDelayed(guardTick, COVER_GUARD_POLL_MS)
+    }
+
+    /**
+     * Looks at which window is in front, on [ReadThreads.guard]. One
+     * window-list call; a tree read only for a window not seen before.
+     */
+    private fun requestFrontCheck(throttled: Boolean = false) {
+        if (destroyed || frontCheckInFlight) return
+        val now = SystemClock.uptimeMillis()
+        if (throttled && now - lastFrontCheckAt < FRONT_CHECK_MIN_GAP_MS) return
+        lastFrontCheckAt = now
+        frontCheckInFlight = true
+        val known = igWindowIds.toSet()
+        val awayId = lastAwayWindowId
+        ReadThreads.guard.post {
+            var verdict = FrontWindow.Verdict.UNKNOWN
+            var frontId = -1
+            var igVisible = false
+            try {
+                val list = windows
+                val wins = list.map { w ->
+                    FrontWindow.Win(
+                        id = w.id,
+                        kind = when (w.type) {
+                            AccessibilityWindowInfo.TYPE_APPLICATION -> FrontWindow.Kind.APP
+                            AccessibilityWindowInfo.TYPE_SYSTEM -> FrontWindow.Kind.SYSTEM
+                            else -> FrontWindow.Kind.IGNORED
+                        },
+                        focused = w.isFocused,
+                        active = w.isActive,
+                    )
+                }
+                igVisible = wins.any { it.id in known }
+                val front = FrontWindow.front(wins)
+                frontId = front?.id ?: -1
+                verdict = FrontWindow.judge(front) { win ->
+                    when (win.id) {
+                        in known -> true
+                        awayId -> false
+                        else -> list.firstOrNull { it.id == win.id }
+                            ?.let { w -> try { w.root?.packageName?.toString() } catch (_: Throwable) { null } }
+                            ?.let { isInstagramPackage(it) }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "front check failed", t)
+            }
+            handler.post {
+                frontCheckInFlight = false
+                if (destroyed) return@post
+                applyFrontVerdict(verdict, frontId, igVisible)
+            }
+        }
+    }
+
+    private fun applyFrontVerdict(verdict: FrontWindow.Verdict, frontId: Int, igVisible: Boolean = true) {
+        when (verdict) {
+            FrontWindow.Verdict.AWAY -> {
+                if (frontId >= 0) lastAwayWindowId = frontId
+                igVisibleBehind = igVisible
+                if (!igAway) {
+                    igAway = true
+                    Log.d(TAG, "guard: Instagram not in front (window $frontId), covers down")
+                }
+                overlay.hide()
+                endFeedHold()
+                feedCovers.clear()
+            }
+            FrontWindow.Verdict.INSTAGRAM -> {
+                noteInstagramWindow(frontId)
+                if (igAway && !screenOff) {
+                    igAway = false
+                    Log.d(TAG, "guard: Instagram back in front")
+                    if (onHomeFeed) scheduleFeedRefresh()
+                    // Events that came while away were dropped; look again.
+                    awayDroppedEvent?.let { enqueueTreeWalk(it) }
+                }
+                awayDroppedEvent = null
+            }
+            FrontWindow.Verdict.UNKNOWN -> Unit
+        }
+        ensureCoverGuard()
+    }
+
+    private fun onScreenOff(source: String) {
+        if (screenOff) return
+        Log.d(TAG, "screen off ($source), covers down")
+        screenOff = true
+        applyFrontVerdict(FrontWindow.Verdict.AWAY, -1, igVisible = false)
+    }
+
+    private fun onScreenOn() {
+        screenOff = false
+        requestFrontCheck()
+    }
+
+    /**
+     * Samsung hands ACTION_SCREEN_OFF to apps over a second after the
+     * power press, so a quick wake could show the covers on the lock
+     * screen. The display's own state changes the moment it turns off.
+     * It also changes on refresh-rate switches, so only an on/off
+     * transition does anything.
+     */
+    private fun registerDisplayListener() {
+        if (displayListener != null) return
+        val dm = getSystemService(DisplayManager::class.java) ?: return
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+            override fun onDisplayRemoved(displayId: Int) = Unit
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId != Display.DEFAULT_DISPLAY || destroyed) return
+                val state = dm.getDisplay(displayId)?.state ?: return
+                val on = state == Display.STATE_ON || state == Display.STATE_ON_SUSPEND || state == Display.STATE_VR
+                if (!on) onScreenOff("display") else if (screenOff) onScreenOn()
+            }
+        }
+        dm.registerDisplayListener(listener, handler)
+        displayListener = listener
+    }
+
+    private fun registerScreenReceiver() {
+        registerDisplayListener()
+        if (screenReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                when (intent.action) {
+                    Intent.ACTION_SCREEN_OFF -> onScreenOff("broadcast")
+                    Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> onScreenOn()
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        screenReceiver = receiver
     }
 
     private fun currentWindowSummaries(): List<InstagramPresence.WindowSummary> {
@@ -1193,13 +1463,6 @@ class ReelBlockerService : AccessibilityService() {
                 fastPath = fastPath,
             )
         )
-        updateStatusNotification(
-            screen = screen,
-            action = action,
-            signature = signature,
-            note = eventTypeName,
-            diagnostics = diagnostics,
-        )
     }
 
     private fun triggerBlock(
@@ -1252,7 +1515,7 @@ class ReelBlockerService : AccessibilityService() {
                 // single BACK to pop the in-flight Reels navigation.
                 handler.postDelayed({
                     if (stateMachine.currentMode() == SessionStateMachine.Mode.BLOCKING &&
-                        blockedScreenEventFresh()
+                        blockedScreenEventFresh() && !igAway
                     ) {
                         performGlobalAction(GLOBAL_ACTION_BACK)
                     }
@@ -1281,7 +1544,7 @@ class ReelBlockerService : AccessibilityService() {
         // below retries if the viewer is still on top afterwards.
         handler.postDelayed({
             if (stateMachine.currentMode() == SessionStateMachine.Mode.BLOCKING &&
-                blockedScreenEventFresh()
+                blockedScreenEventFresh() && !igAway
             ) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
             }
@@ -1307,7 +1570,7 @@ class ReelBlockerService : AccessibilityService() {
     }
 
     private fun verifyNavigation(attempt: Int) {
-        if (!settings.blockingEnabled) return
+        if (!settings.isActive() || igAway) return
         if (stateMachine.currentMode() != SessionStateMachine.Mode.BLOCKING) return
         val root = currentInstagramRoot()
         val screen: ScreenType
@@ -1430,10 +1693,11 @@ class ReelBlockerService : AccessibilityService() {
         screen: ScreenType,
         signature: String?,
         priorMode: SessionStateMachine.Mode,
+        openedFromDm: Boolean = false,
     ): String? {
         if (screen != ScreenType.REEL_VIEWER || signature == null) return signature
         val dmEntryImminent = priorMode == SessionStateMachine.Mode.IDLE &&
-            stateMachine.currentPrevScreen() == ScreenType.DM_THREAD
+            stateMachine.dmEntryImminent(openedFromDm)
         val inDmGrace = priorMode == SessionStateMachine.Mode.DM_ALLOWED_REEL &&
             dmAllowedSinceMs > 0L &&
             System.currentTimeMillis() - dmAllowedSinceMs < DM_REEL_SCROLL_GRACE_MS
@@ -1444,7 +1708,7 @@ class ReelBlockerService : AccessibilityService() {
      * Compose a one-line audit trail for every event we handle: why we
      * did or didn't act, what the cooldown and mode looked like, and
      * which route we took if we acted. This is the primary field a
-     * human (or Claude) reads when diagnosing "it's blocking stuff it
+     * person reads when diagnosing "it's blocking stuff it
      * shouldn't" or "reels aren't getting blocked" — we want enough
      * context in one line to decide without having to correlate across
      * multiple entries.
@@ -1485,15 +1749,80 @@ class ReelBlockerService : AccessibilityService() {
 
     private fun isInstagramPackage(pkg: String): Boolean = pkg in INSTAGRAM_PACKAGES
 
+    /**
+     * The reel on screen came from a DM: its reply bar is showing, or the
+     * Messages tab was the last tab and the user is not on someone's
+     * profile (a profile opened from a chat keeps that tab selected).
+     */
+    private fun openedFromDm(snapshot: NodeSnapshot?): Boolean =
+        ReelDetector.hasDmReplyBar(snapshot) ||
+            (lastSelectedTab == ReelDetector.TAB_DIRECT &&
+                profileTracker.context != ProfileContextTracker.Context.OTHER_PROFILE)
+
+    /** Where the reel on screen was opened from, for the per-place switches. */
+    private fun reelOrigin(): SessionStateMachine.ReelOrigin = when (profileTracker.context) {
+        ProfileContextTracker.Context.OWN_PROFILE -> SessionStateMachine.ReelOrigin.OWN_PROFILE
+        ProfileContextTracker.Context.OTHER_PROFILE -> SessionStateMachine.ReelOrigin.ELSEWHERE
+        ProfileContextTracker.Context.NONE -> when (lastSelectedTab) {
+            ReelDetector.TAB_REELS -> SessionStateMachine.ReelOrigin.REELS_TAB
+            ReelDetector.TAB_HOME -> SessionStateMachine.ReelOrigin.HOME
+            ReelDetector.TAB_SEARCH -> SessionStateMachine.ReelOrigin.EXPLORE
+            else -> SessionStateMachine.ReelOrigin.ELSEWHERE
+        }
+    }
+
+    /**
+     * Instagram's window when it has focus, read whole. Samsung sometimes
+     * reports another window as active while Instagram is in front.
+     */
+    private fun focusedInstagramRoot(): AccessibilityNodeInfo? {
+        val all = try { windows } catch (_: Throwable) { null } ?: return null
+        val wins = all.map { w ->
+            FrontWindow.Win(
+                id = w.id,
+                kind = if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    FrontWindow.Kind.APP
+                } else if (w.type == AccessibilityWindowInfo.TYPE_SYSTEM) {
+                    FrontWindow.Kind.SYSTEM
+                } else {
+                    FrontWindow.Kind.IGNORED
+                },
+                focused = w.isFocused,
+                active = w.isActive,
+            )
+        }
+        val front = FrontWindow.front(wins) ?: return null
+        if (front.kind != FrontWindow.Kind.APP) return null
+        val window = all.firstOrNull { it.id == front.id } ?: return null
+        val root = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                window.getRoot(WALK_PREFETCH)
+            } else {
+                window.root
+            }
+        } catch (_: Throwable) {
+            null
+        } ?: return null
+        return if (isInstagramPackage(root.packageName?.toString().orEmpty())) root else null
+    }
+
+    /**
+     * The tree to classify. [windowNode] is Instagram's focused window,
+     * read when the active-window root isn't Instagram's; it is a whole
+     * window, so it beats a read of the event's own list.
+     */
     private fun selectInstagramNode(
         rootNode: AccessibilityNodeInfo?,
         sourceNode: AccessibilityNodeInfo?,
+        windowNode: AccessibilityNodeInfo? = null,
     ): NodeSelection {
         val rootPackageName = rootNode?.packageName?.toString()
         val sourcePackageName = sourceNode?.packageName?.toString()
         return when {
             rootNode != null && isInstagramPackage(rootPackageName.orEmpty()) ->
                 NodeSelection(rootNode, "root", rootPackageName, sourcePackageName)
+            windowNode != null ->
+                NodeSelection(windowNode, "window", rootPackageName, sourcePackageName)
             sourceNode != null && isInstagramPackage(sourcePackageName.orEmpty()) ->
                 NodeSelection(sourceNode, "source", rootPackageName, sourcePackageName)
             else ->
@@ -1829,88 +2158,61 @@ class ReelBlockerService : AccessibilityService() {
         notifMgr.createNotificationChannel(channel)
     }
 
-    private fun updateStatusNotification(
-        screen: ScreenType = ScreenType.UNKNOWN,
-        action: SessionStateMachine.Action = SessionStateMachine.Action.NONE,
-        signature: String? = null,
-        note: String? = null,
-        diagnostics: String? = null,
-        force: Boolean = false,
-    ) {
-        // Event storms (content-changed floods, scrolls) would otherwise
-        // post hundreds of notification updates per second. Blocks and
-        // explicit state changes always post; routine ticks are capped.
-        val now = System.currentTimeMillis()
-        if (!force &&
-            action != SessionStateMachine.Action.BLOCK_REEL &&
-            now - lastNotifPostAt < NOTIF_MIN_INTERVAL_MS
-        ) {
+    /**
+     * One plain line: on, paused (with a countdown) or off, and a button
+     * to pause for a minute or resume. Posted only when that state
+     * changes; the user can turn it off in the app.
+     */
+    private fun updateStatusNotification() {
+        if (!settings.showNotification) {
+            notifMgr.cancel(STATUS_NOTIF_ID)
             return
         }
-        lastNotifPostAt = now
-
-        val openLog = PendingIntent.getActivity(
+        val openApp = PendingIntent.getActivity(
             this, 0,
-            Intent(this, LogActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-
-        val title = if (settings.blockingEnabled)
-            getString(R.string.notif_title_active)
-        else
-            getString(R.string.notif_title_paused)
-        val text = if (settings.blockingEnabled)
-            getString(R.string.notif_text_active)
-        else
-            getString(R.string.notif_text_paused)
-
-        val summary = buildString {
-            append("events=")
-            append(eventCount)
-            append(" · screen=")
-            append(screen.name)
-            append(" · mode=")
-            append(stateMachine.currentMode().name)
-            append(" · act=")
-            append(action.name)
-            if (!signature.isNullOrBlank()) {
-                append(" · sig=")
-                append(signature.take(24))
-            }
-            if (!note.isNullOrBlank()) {
-                append(" · ")
-                append(note)
-            }
-        }
-
-        // Detection details only on debug builds, and only when the
-        // notification is expanded; the collapsed line stays plain.
-        val bigText = if (!isDebugBuild) text else buildString {
-            append(text)
-            append('\n')
-            append(summary)
-            if (!diagnostics.isNullOrBlank()) {
-                append('\n')
-                append(diagnostics)
-            }
-        }
-
-        // The notification itself is tappable (setContentIntent -> log).
-        // No separate action button — keeps the layout compact and
-        // avoids OEM quirks around null action icons.
         val builder = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_shield)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(Notification.BigTextStyle().bigText(bigText))
+            .setSmallIcon(R.drawable.ic_logo)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setContentIntent(openLog)
-            .setShowWhen(true)
-            .setWhen(System.currentTimeMillis())
+            .setContentIntent(openApp)
             .setCategory(Notification.CATEGORY_SERVICE)
-
+        val pausedUntil = settings.pausedUntil
+        when {
+            !settings.blockingEnabled -> builder
+                .setContentTitle(getString(R.string.notif_title_off))
+                .setContentText(getString(R.string.notif_text_off))
+                .setShowWhen(false)
+            pausedUntil > System.currentTimeMillis() -> builder
+                .setContentTitle(getString(R.string.notif_title_paused))
+                .setContentText(getString(R.string.notif_text_paused))
+                .setShowWhen(true)
+                .setWhen(pausedUntil)
+                .setUsesChronometer(true)
+                .setChronometerCountDown(true)
+                .addAction(notifAction(NotificationActionReceiver.ACTION_RESUME, R.string.notif_action_resume))
+            else -> builder
+                .setContentTitle(getString(R.string.notif_title_active))
+                .setContentText(getString(R.string.notif_text_active))
+                .setShowWhen(false)
+                .addAction(notifAction(NotificationActionReceiver.ACTION_PAUSE, R.string.notif_action_pause))
+        }
         notifMgr.notify(STATUS_NOTIF_ID, builder.build())
+    }
+
+    private fun notifAction(action: String, label: Int): Notification.Action {
+        val intent = Intent(this, NotificationActionReceiver::class.java).setAction(action)
+        val pending = PendingIntent.getBroadcast(
+            this, action.hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return Notification.Action.Builder(
+            Icon.createWithResource(this, R.drawable.ic_logo),
+            getString(label),
+            pending,
+        ).build()
     }
 
     companion object {
@@ -1957,9 +2259,14 @@ class ReelBlockerService : AccessibilityService() {
          *  the rest are counted and folded into the next entry. */
         private const val NULL_TREE_LOG_INTERVAL_MS = 1000L
 
-        /** Minimum spacing between routine status-notification posts.
-         *  Blocks and settings changes bypass this. */
-        private const val NOTIF_MIN_INTERVAL_MS = 500L
+        /** While a cover is up, how often the front window is checked. */
+        private const val COVER_GUARD_POLL_MS = 250L
+
+        /** Event-driven front checks run at most this often. */
+        private const val FRONT_CHECK_MIN_GAP_MS = 100L
+
+        /** How many Instagram window ids to remember. */
+        private const val IG_WINDOW_MEMORY = 8
 
         /** At most one log entry per this interval for identical
          *  (screen, action, route) repeats; the rest are counted. */

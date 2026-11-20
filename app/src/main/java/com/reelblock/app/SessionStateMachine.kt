@@ -10,16 +10,18 @@ package com.reelblock.app
  * and acts on the returned [Action].
  *
  * Rules:
- *  1. The Reels tab is ALWAYS blocked.
- *  2. A reel viewer entered directly after a DM thread is allowed, but
- *     only for the specific reel signature seen on entry — and only
- *     while [allowDmReels] is on.
+ *  1. The Reels tab is blocked while [blockReelsTab] is on.
+ *  2. A reel opened from DMs (see [dmEntryImminent]) is allowed while
+ *     [allowDmReels] is on — only that reel: a swipe to the next one is
+ *     blocked.
  *  3. If the username signature changes while we are in "DM-allowed"
  *     mode (the user swiped to another author's reel), we block.
  *     Coarse `txt:` fallback signatures never trigger this — they
  *     drift as captions load frame-by-frame.
- *  4. Any reel viewer reached from anywhere other than a DM thread is
- *     blocked.
+ *  4. Any other reel follows the switch for where it was opened
+ *     ([ReelOrigin]): Home, Search & Explore, or the user's own profile.
+ *     Anywhere else (someone else's profile, an audio page, ...) it is
+ *     always blocked.
  *  5. A scroll inside the reel viewer while in DM-allowed mode counts
  *     as a swipe — external callers use [onReelScroll] for that.
  */
@@ -31,6 +33,16 @@ class SessionStateMachine {
      * [SettingsStore.allowDmReels]; the service keeps it in sync.
      */
     var allowDmReels: Boolean = true
+
+    /** User-facing switches, one per place; the service keeps them in sync. */
+    var blockReelsTab: Boolean = true
+    var blockHomeReels: Boolean = true
+    var blockExploreReels: Boolean = true
+    var blockOwnProfileReels: Boolean = false
+
+    /** Where a reel viewer was opened from, apart from DMs. [REELS_TAB]
+     *  is a read of the Reels tab's own player that missed the tab bar. */
+    enum class ReelOrigin { REELS_TAB, HOME, EXPLORE, OWN_PROFILE, ELSEWHERE }
 
     enum class Mode {
         /** Not currently tracking a reel-watch session. */
@@ -83,10 +95,20 @@ class SessionStateMachine {
      * for every meaningful accessibility event so the state machine can
      * track transitions.
      */
-    fun handleScreen(newScreen: ScreenType, reelSignature: String?): Action {
+    fun handleScreen(
+        newScreen: ScreenType,
+        reelSignature: String?,
+        origin: ReelOrigin = ReelOrigin.ELSEWHERE,
+        openedFromDm: Boolean = false,
+    ): Action {
         val action = when (newScreen) {
-            ScreenType.REELS_TAB -> enterBlocking()
-            ScreenType.REEL_VIEWER -> handleReelViewer(reelSignature)
+            ScreenType.REELS_TAB -> if (blockReelsTab) {
+                enterBlocking()
+            } else {
+                if (mode == Mode.BLOCKING) resetSession()
+                Action.NONE
+            }
+            ScreenType.REEL_VIEWER -> handleReelViewer(reelSignature, origin, openedFromDm)
             ScreenType.DM_THREAD, ScreenType.DM_INBOX -> {
                 // User is navigating in Direct — that resets any prior
                 // blocking state, so the next reel viewer can be a fresh
@@ -146,7 +168,17 @@ class SessionStateMachine {
         return Action.BLOCK_REEL
     }
 
-    private fun handleReelViewer(sig: String?): Action {
+    /**
+     * True when the next reel viewer would count as opened from DMs:
+     * a DM thread was the last screen, or the service saw DM signs of its
+     * own ([openedFromDm]: the reply bar under the reel, or the Messages
+     * tab being the last tab). An inbox read alone does not count — the
+     * Home feed's DM button can read as an inbox.
+     */
+    fun dmEntryImminent(openedFromDm: Boolean = false): Boolean =
+        mode == Mode.IDLE && (openedFromDm || lastKnownScreen == ScreenType.DM_THREAD)
+
+    private fun handleReelViewer(sig: String?, origin: ReelOrigin, openedFromDm: Boolean): Action {
         // Case 1: we are already blocking this reel session and the
         // viewer is still on top — keep blocking (the service will be
         // pressing BACK in a loop).
@@ -154,22 +186,7 @@ class SessionStateMachine {
             return Action.BLOCK_REEL
         }
 
-        // The DM exemption is a user option. When it's off, no reel
-        // viewer is ever allowed — including one we already allowed
-        // before the option was flipped mid-watch.
-        if (!allowDmReels) {
-            return enterBlocking()
-        }
-
-        // Case 2: We were in a DM thread immediately before this reel
-        // viewer came up. Upgrade to DM-allowed and remember the reel.
-        if (mode == Mode.IDLE && lastKnownScreen == ScreenType.DM_THREAD) {
-            mode = Mode.DM_ALLOWED_REEL
-            allowedReelSignature = sig
-            return Action.ALLOW_REEL
-        }
-
-        // Case 3: Already in DM-allowed mode. The explicit scroll signal
+        // Case 2: Already in DM-allowed mode. The explicit scroll signal
         // ([onReelScroll], fired from TYPE_VIEW_SCROLLED after the grace
         // window) is the primary swipe detector, but it has a hole: a
         // swipe inside the grace window is invisible to it, and the next
@@ -181,6 +198,8 @@ class SessionStateMachine {
         // used to kick users out of legitimately DM-opened reels a beat
         // after they started playing.
         if (mode == Mode.DM_ALLOWED_REEL) {
+            // The option was turned off mid-watch.
+            if (!allowDmReels) return enterBlocking()
             val latched = allowedReelSignature
             when {
                 latched.isNullOrBlank() -> {
@@ -200,8 +219,26 @@ class SessionStateMachine {
             return Action.ALLOW_REEL
         }
 
-        // Case 4: Reel viewer appearing from anywhere else.
-        return enterBlocking()
+        // Case 3: opened from DMs. [openedFromDm] matters: a thread takes
+        // ~1.5 s to read, and a reel tapped before that used to be
+        // blocked on the first try.
+        if (dmEntryImminent(openedFromDm)) {
+            if (!allowDmReels) return enterBlocking()
+            mode = Mode.DM_ALLOWED_REEL
+            allowedReelSignature = sig
+            return Action.ALLOW_REEL
+        }
+
+        // Case 4: the switch for where it was opened. An allowed reel
+        // keeps the mode IDLE, so swiping on from it stays allowed.
+        val block = when (origin) {
+            ReelOrigin.REELS_TAB -> blockReelsTab
+            ReelOrigin.HOME -> blockHomeReels
+            ReelOrigin.EXPLORE -> blockExploreReels
+            ReelOrigin.OWN_PROFILE -> blockOwnProfileReels
+            ReelOrigin.ELSEWHERE -> true
+        }
+        return if (block) enterBlocking() else Action.ALLOW_REEL
     }
 
     private fun isStableSignature(sig: String?): Boolean =

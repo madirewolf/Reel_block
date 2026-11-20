@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy</title>
+  <meta name="description" content="How Reel It In handles your data: it doesn't collect any.">
+  <meta name="theme-color" content="#0b0b0c">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <img src="icon.svg" alt="">
+      <a href="/">Reel It In</a>
+      <span class="tag">Stop peeling your eyes. Give ’em a break.</span>
+    </header>
+
+    <main class="doc">
+      <h1>Privacy policy</h1>
+      <p class="muted">Last updated 20 November 2026</p>
+
+      <p>Reel It In is an Android app that blocks Instagram Reels. This policy explains what the app can see and what it does with it. In short: it collects nothing, and nothing leaves your phone.</p>
+
+      <h3>What the app reads</h3>
+      <p>Reel It In uses Android's AccessibilityService API. Its accessibility service is limited to the Instagram app: Android does not pass it events from any other app. To know when you leave Instagram, it also checks which app is in front, by package name only; it does not read other apps' screens. It reads the structure of Instagram's screen (view ids, labels and visible text) only to tell whether a reel is showing and where it was opened from: the Reels tab, Home, Search &amp; Explore, your profile, or a direct message. When a reel should be blocked, the service covers the screen and goes back, using the same accessibility API.</p>
+      <p>The service does not record your messages, does not record what you type, and does not take screenshots.</p>
+
+      <h3>What is stored, and where</h3>
+      <ul>
+        <li>Your settings: which places to block, how the block screen looks, and whether the notification shows.</li>
+        <li>A photo, only if you choose one for the block screen. A copy is kept in the app's private storage.</li>
+        <li>A short detection log of recent screens the app classified, kept in the app's private storage to help diagnose problems. An entry can include the username of a reel's author, which is how the app tells one reel from the next. The log is never sent anywhere. You can clear it, or export it yourself from the app.</li>
+      </ul>
+      <p>All of this stays on your device. Uninstalling the app deletes it.</p>
+
+      <h3>What is shared</h3>
+      <p>Nothing. The app does not ask for internet access, so it cannot send data off your phone. It has no ads, no analytics, no crash reporting and no accounts.</p>
+
+      <h3>Permissions</h3>
+      <ul>
+        <li><strong>Accessibility service</strong>: to detect and block reels in Instagram, as described above. You turn it on and off in Android's settings.</li>
+        <li><strong>Notifications</strong>: to show whether blocking is on, with a Pause 1 min button. You can hide it in the app.</li>
+        <li><strong>Battery optimization exemption</strong>: so Android does not stop the blocker in the background. Optional.</li>
+      </ul>
+
+      <h3>Children</h3>
+      <p>The app collects no personal information from anyone, including children.</p>
+
+      <h3>Changes</h3>
+      <p>If this policy changes, the new version will be posted on this page with a new date.</p>
+
+      <h3>Contact</h3>
+      <p>Questions about this policy: open an issue at <a href="https://github.com/madirewolf/Reel_block/issues">github.com/madirewolf/Reel_block</a>.</p>
+    </main>
+
+    <footer>
+      <a href="/">Reel It In</a>
+      <a href="https://github.com/madirewolf/Reel_block">GitHub</a>
+      <span>Not affiliated with Instagram or Meta.</span>
+    </footer>
+  </div>
+</body>
+</html>

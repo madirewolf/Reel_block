@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">Reel It In</string>
+    <string name="tagline">Stop peeling your eyes. Give ’em a break.</string>
 
     <!-- Shown by Android in Settings > Accessibility. -->
     <string name="accessibility_service_label">Reel It In</string>
@@ -8,7 +9,8 @@
 
     <!-- Main screen -->
     <string name="status_on">On</string>
-    <string name="status_paused">Paused</string>
+    <string name="status_paused">Off</string>
+    <string name="status_paused_minute">Paused for a minute</string>
     <string name="status_setup">Not running yet. Finish step 1.</string>
 
     <string name="section_setup">Setup</string>
@@ -18,6 +20,12 @@
     <string name="step_2_body">Shows when blocking is on.</string>
     <string name="step_3_title">Keep it running</string>
     <string name="step_3_body">Stops your phone from closing it to save battery.</string>
+
+    <!-- Shown before sending you to Accessibility settings. -->
+    <string name="disclosure_title">Before you turn it on</string>
+    <string name="disclosure_body">Reel It In uses Android\'s accessibility service to read Instagram\'s screen: view names, labels and visible text. It uses this only to tell when a reel is showing and where you opened it, so it can cover the reel and go back.\n\nIt doesn\'t read other apps, record your messages or what you type, or take screenshots. Nothing leaves your phone: the app has no internet access.</string>
+    <string name="disclosure_agree">Agree</string>
+    <string name="disclosure_decline">Not now</string>
     <string name="step_open">Open</string>
     <string name="step_allow">Allow</string>
     <string name="step_done">Done</string>
@@ -26,17 +34,48 @@
     <string name="section_options">Options</string>
     <string name="option_block_title">Block reels</string>
     <string name="option_block_body">The Reels tab, and any reel you open or swipe to.</string>
-    <string name="option_dm_title">Allow reels from DMs</string>
-    <string name="option_dm_body">Watch the reel a friend sent you. Swiping to the next one is blocked.</string>
-    <string name="option_feed_title">Hide reels in Home feed</string>
-    <string name="option_feed_body">Covers reels in your feed as you scroll.</string>
+
+    <string name="section_places">Block reels in</string>
+    <string name="place_reels_title">Reels tab</string>
+    <string name="place_reels_body">The Reels tab and every reel you swipe to from it.</string>
+    <string name="place_home_title">Home</string>
+    <string name="place_home_body">Hides reels in your feed and blocks opening them.</string>
+    <string name="place_explore_title">Search &amp; Explore</string>
+    <string name="place_explore_body">Reels you open from Search and Explore.</string>
+    <string name="place_profile_title">Your profile</string>
+    <string name="place_profile_body">Your own reels, posts and reposts.</string>
+    <string name="place_dm_title">DMs</string>
+    <string name="place_dm_body">Off: watch the reel a friend sent you. Swiping on to the next is still blocked.</string>
+    <string name="places_footnote">Reels anywhere else, like on someone else\'s profile, are always blocked.</string>
+
+    <string name="section_cover">Block screen</string>
+    <string name="cover_style_solid">Plain</string>
+    <string name="cover_style_dots">Dots</string>
+    <string name="cover_style_stripes">Stripes</string>
+    <string name="cover_style_grid">Grid</string>
+    <string name="cover_style_photo">Photo</string>
+    <string name="cover_change_photo">Change photo</string>
+    <string name="cover_photo_failed">Couldn\'t use that photo.</string>
+    <string name="swatch_default">Default</string>
+    <string name="swatch_slate">Slate</string>
+    <string name="swatch_plum">Plum</string>
+    <string name="swatch_pine">Pine</string>
+    <string name="swatch_clay">Clay</string>
+    <string name="swatch_paper">Paper</string>
+
+    <string name="option_notif_title">Show notification</string>
+    <string name="option_notif_body">Says when blocking is on, with a Pause 1 min button.</string>
 
     <string name="view_log">Detection log</string>
 
     <!-- Content descriptions for the switches. -->
     <string name="toggle_blocking">Block reels</string>
-    <string name="toggle_dm_reels">Allow reels from DMs</string>
-    <string name="toggle_feed_reels">Hide reels in Home feed</string>
+    <string name="toggle_reels_tab">Block reels in the Reels tab</string>
+    <string name="toggle_home">Block reels in Home</string>
+    <string name="toggle_explore">Block reels in Search and Explore</string>
+    <string name="toggle_profile">Block reels on your profile</string>
+    <string name="toggle_dm">Block reels in DMs</string>
+    <string name="toggle_notification">Show notification</string>
 
     <!-- Detection log -->
     <string name="detection_log_title">Detection log</string>
@@ -56,8 +95,12 @@
     <string name="notif_channel_name">Reel It In status</string>
     <string name="notif_title_active">Reel It In is on</string>
     <string name="notif_title_paused">Reel It In is paused</string>
+    <string name="notif_title_off">Reel It In is off</string>
     <string name="notif_text_active">Blocking Instagram Reels</string>
-    <string name="notif_text_paused">Open the app to turn blocking back on</string>
+    <string name="notif_text_paused">Blocking comes back on by itself</string>
+    <string name="notif_text_off">Tap to turn blocking back on</string>
+    <string name="notif_action_pause">Pause 1 min</string>
+    <string name="notif_action_resume">Resume now</string>
 
     <string name="nav_up">Back</string>
 </resources>

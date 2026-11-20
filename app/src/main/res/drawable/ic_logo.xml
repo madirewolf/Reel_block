@@ -1,0 +1,14 @@
+<!-- The logo: two eyes with slit pupils that form a pause sign. Also the
+     notification icon, so it is one shape with the pupils cut out. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <group android:pivotX="24" android:pivotY="24" android:scaleX="1.25" android:scaleY="1.25">
+        <path
+            android:fillColor="#F2F2F2"
+            android:fillType="evenOdd"
+            android:pathData="M17.5,10Q26.5,24 17.5,38Q8.5,24 17.5,10Z M30.5,10Q39.5,24 30.5,38Q21.5,24 30.5,10Z M17.5,19.5a1.1,4.5 0 1,0 0,9a1.1,4.5 0 1,0 0,-9Z M30.5,19.5a1.1,4.5 0 1,0 0,9a1.1,4.5 0 1,0 0,-9Z" />
+    </group>
+</vector>
