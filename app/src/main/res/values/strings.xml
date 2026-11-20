@@ -8,11 +8,6 @@
     <string name="tagline">Make Instagram about your actual friends again.</string>
     <string name="hero_description">Reel It In sits between you and the slot machine. The Reels tab gets shut down the moment you land on it. Reels your friends share in DMs still work — one reel, one viewing, no autoswipe to the next. Think of it as a dopamine cleanse for your feed.</string>
 
-    <string name="card_overlay_title">Display overlay</string>
-    <string name="card_overlay_body">Used to cover the reel feed the instant it appears, while Reel It In navigates you away.</string>
-    <string name="card_overlay_grant">Grant overlay permission</string>
-    <string name="card_overlay_granted">Granted</string>
-    <string name="card_overlay_missing">Not granted</string>
 
     <string name="card_accessibility_title">Accessibility service</string>
     <string name="card_accessibility_body">Required to detect which Instagram screen is on top. Reel It In only inspects Instagram — no other apps are monitored.</string>
@@ -40,7 +35,7 @@
     <string name="detection_log_clipboard_only">Couldn\'t save to Downloads — JSON copied to clipboard.</string>
 
     <string name="how_it_works_title">How it works</string>
-    <string name="how_it_works_body">Reel It In uses Android\'s Accessibility framework to read the top window when Instagram is in the foreground. The detector identifies:\n\n• The Reels tab (main reels feed) — always blocked.\n• A DM thread followed by a reel viewer — the reel is allowed, once.\n• Any scroll or swipe to a different reel — blocked.\n\nWhen blocking triggers, a banner appears and the app routes you back to the last non-Reels Instagram tab when it can, or backs out once from a fullscreen reel viewer.\n\nThe point: claim back your attention. Use Instagram to see what your friends are actually up to — not to get brainmaxxed by an algorithm.</string>
+    <string name="how_it_works_body">Reel It In uses Android\'s Accessibility framework to read the top window when Instagram is in the foreground. The detector identifies:\n\n• The Reels tab (main reels feed) — always blocked.\n• A DM thread followed by a reel viewer — the reel is allowed, once.\n• Any scroll or swipe to a different reel — blocked.\n\nWhen blocking triggers, a full-screen cover hides the reel while the app routes you back to the last non-Reels Instagram tab when it can, or backs out once from a fullscreen reel viewer.\n\nThe point: claim back your attention. Use Instagram to see what your friends are actually up to — not to get brainmaxxed by an algorithm.</string>
 
     <string name="reel_blocked_title">Reeled in.</string>
     <string name="reel_blocked_subtitle">Not from a friend. Dopamine receptors thank you.</string>

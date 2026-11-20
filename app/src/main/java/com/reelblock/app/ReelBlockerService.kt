@@ -6,14 +6,20 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import androidx.core.content.ContextCompat
 
 /**
  * The heart of Reel Block.
@@ -28,12 +34,17 @@ import android.view.accessibility.AccessibilityNodeInfo
  *  2. Asks [ReelDetector] to classify the screen + extract a reel sig.
  *  3. Feeds the result into [SessionStateMachine], which returns an
  *     Action (ALLOW/BLOCK/NONE).
- *  4. On BLOCK, pops up the overlay and routes away from Reels.
+ *  4. On BLOCK, puts up the full-screen cover and routes away from Reels.
  *
- * Every event — Instagram or otherwise — that matches our package
- * filter is recorded to [DetectionLog] along with a diagnostic
- * summary, **and mirrored into an ongoing status notification** so the
- * user can see the live state without leaving Instagram.
+ * The service is registered for Instagram's packages only, so it never
+ * hears about the launcher or other apps. Leaving Instagram is detected
+ * by polling the window list ([InstagramPresence]) while a session is
+ * live, which is what resets state between visits.
+ *
+ * Every handled event is recorded to [DetectionLog] along with a
+ * diagnostic summary, **and mirrored into an ongoing status
+ * notification** so the user can see the live state without leaving
+ * Instagram.
  */
 class ReelBlockerService : AccessibilityService() {
 
@@ -91,6 +102,18 @@ class ReelBlockerService : AccessibilityService() {
      *  a covered/backgrounded Instagram cannot produce these
      *  classifications because its tree is unreachable. */
     private var lastBlockedScreenEventAt: Long = 0L
+
+    /** Our own tab clicks echo back as click events; see [SelfTabClickEcho]. */
+    private val selfTabClickEcho = SelfTabClickEcho()
+
+    /** Leave-Instagram detection: polls the window list while a session
+     *  is live, because no event arrives when the user goes elsewhere. */
+    private val presence = InstagramPresence(INSTAGRAM_PACKAGES)
+    private var presenceWatchActive = false
+    private val presenceCheck = Runnable { checkInstagramPresence() }
+
+    /** Debug builds only — see [DebugTreeDump]. */
+    private var debugDumpReceiver: BroadcastReceiver? = null
 
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
@@ -156,6 +179,7 @@ class ReelBlockerService : AccessibilityService() {
         stateMachine.reset()
         clearBlockingCooldown()
         lastNonReelsBottomTab = null
+        registerDebugDumpReceiver()
         DetectionLog.record(
             DetectionLog.Entry(
                 timestamp = System.currentTimeMillis(),
@@ -189,22 +213,25 @@ class ReelBlockerService : AccessibilityService() {
         eventCount += 1
 
         if (!isInstagramPackage(pkg)) {
-            lastNonReelsBottomTab = null
-            dmAllowedSinceMs = 0L
-            lastBlockedScreenEventAt = 0L
-            if (stateMachine.currentMode() != SessionStateMachine.Mode.IDLE) {
-                stateMachine.reset()
-                clearBlockingCooldown()
-                overlay.hide()
-            }
-            // Refresh the notification but don't pollute the log with
-            // every system-UI / launcher event.
+            // Defensive only: the package filter means Android does not
+            // deliver other apps' events, so leaving Instagram is caught
+            // by the window-list poll in [checkInstagramPresence].
+            resetSessionState()
             updateStatusNotification(
                 screen = ScreenType.UNKNOWN,
                 action = SessionStateMachine.Action.NONE,
                 note = "idle (pkg=$pkg)",
             )
             return
+        }
+
+        startPresenceWatch()
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SELECTED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
+        ) {
+            // Only the foreground app receives taps and scrolls.
+            presence.onInstagramEvidence()
         }
 
         // ---- FAST PATH A: classify directly from the event itself ----
@@ -215,10 +242,20 @@ class ReelBlockerService : AccessibilityService() {
         // than leaving us to disambiguate two concurrently-"selected"
         // tabs in the stale accessibility tree. Prioritise it above
         // the class-name fast path and the tree walk.
-        val navEventScreen = ReelDetector.classifyByBottomNavEvent(
+        val rawNavEventScreen = ReelDetector.classifyByBottomNavEvent(
             event.eventType,
             event.contentDescription,
         )
+        // The echo of our own Home-tab click says nothing about whether
+        // Instagram switched tabs; let the tree walk decide instead.
+        val navEventScreen = if (
+            rawNavEventScreen == ScreenType.OTHER &&
+            selfTabClickEcho.consumeIfEcho(
+                isClickEvent = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED,
+                eventTabLabel = tabLabelFromNavEvent(event.contentDescription),
+                now = handleStart,
+            )
+        ) null else rawNavEventScreen
 
         // ---- FAST PATH B: classify from event.className alone ----
         // Instagram's activity/fragment class names (ClipsViewerActivity,
@@ -287,7 +324,12 @@ class ReelBlockerService : AccessibilityService() {
             // Wipe any stale DM-allowed-reel mode + lastKnownScreen
             // that could have otherwise let the next reel through as
             // "coming from a DM thread we saw a while ago".
-            stateMachine.noteStableNonDmSurface()
+            // This resets the mode before handleClassifiedScreen runs,
+            // so its BLOCKING->IDLE check can't see the block end: take
+            // the cover down here.
+            if (stateMachine.noteStableNonDmSurface()) {
+                overlay.hideSoon()
+            }
             handleClassifiedScreen(
                 event = event,
                 eventClassName = eventClassName,
@@ -356,6 +398,8 @@ class ReelBlockerService : AccessibilityService() {
         }
         lastNullTreeRecordAt = 0L
         suppressedNullTreeEvents = 0
+        // A readable Instagram tree means Instagram is on screen.
+        presence.onInstagramEvidence()
 
         val treeDebug = ReelDetector.inspectTree(snapshot)
         val screen = ReelDetector.detectScreen(snapshot)
@@ -413,6 +457,7 @@ class ReelBlockerService : AccessibilityService() {
             stateMachine.currentMode() == SessionStateMachine.Mode.IDLE
         ) {
             clearBlockingCooldown()
+            overlay.hideSoon()
         }
         updateDmAllowedWindow(priorMode, action)
         // Intentionally NOT calling clearBlockingCooldown() here on
@@ -549,6 +594,7 @@ class ReelBlockerService : AccessibilityService() {
             stateMachine.currentMode() == SessionStateMachine.Mode.IDLE
         ) {
             clearBlockingCooldown()
+            overlay.hideSoon()
         }
         updateDmAllowedWindow(priorMode, action)
         // Intentionally NOT calling clearBlockingCooldown() here on
@@ -640,10 +686,93 @@ class ReelBlockerService : AccessibilityService() {
         try {
             settings.unregisterListener(settingsListener)
         } catch (_: Throwable) { /* ignore */ }
+        debugDumpReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Throwable) { /* ignore */ }
+        }
+        debugDumpReceiver = null
         handler.removeCallbacksAndMessages(null)
+        presenceWatchActive = false
         overlay.hide()
         notifMgr.cancel(STATUS_NOTIF_ID)
         super.onDestroy()
+    }
+
+    /** Wipe all per-visit state — the user is no longer in Instagram. */
+    private fun resetSessionState() {
+        lastNonReelsBottomTab = null
+        dmAllowedSinceMs = 0L
+        dmReelBaselinePageIndex = Int.MIN_VALUE
+        lastBlockedScreenEventAt = 0L
+        stateMachine.reset()
+        clearBlockingCooldown()
+        overlay.hide()
+    }
+
+    private fun startPresenceWatch() {
+        if (presenceWatchActive) return
+        presenceWatchActive = true
+        presence.onWatchStart()
+        handler.postDelayed(presenceCheck, PRESENCE_POLL_MS)
+    }
+
+    private fun checkInstagramPresence() {
+        if (!presenceWatchActive) return
+        val windows = currentWindowSummaries()
+        val verdict = presence.classify(windows)
+        when (presence.onCheck(verdict)) {
+            InstagramPresence.Decision.KEEP_WATCHING ->
+                handler.postDelayed(presenceCheck, PRESENCE_POLL_MS)
+            InstagramPresence.Decision.STOP -> presenceWatchActive = false
+            InstagramPresence.Decision.LEFT -> {
+                presenceWatchActive = false
+                val modeBefore = stateMachine.currentMode()
+                val prevBefore = stateMachine.currentPrevScreen()
+                resetSessionState()
+                val apps = windows.filter { it.isApplication }.joinToString(",") { it.packageName ?: "?" }
+                Log.i(TAG, "leftInstagram modeBefore=${modeBefore.name} prevBefore=${prevBefore.name} apps=$apps")
+                DetectionLog.record(
+                    DetectionLog.Entry(
+                        timestamp = System.currentTimeMillis(),
+                        screen = ScreenType.UNKNOWN,
+                        action = SessionStateMachine.Action.NONE,
+                        mode = stateMachine.currentMode(),
+                        modeBefore = modeBefore,
+                        previousScreenBefore = prevBefore,
+                        previousScreenAfter = stateMachine.currentPrevScreen(),
+                        signature = null,
+                        note = "leftInstagram",
+                        diagnostics = "leftInstagram: state reset (foreground apps=$apps)",
+                    )
+                )
+                updateStatusNotification(note = "idle (left Instagram)", force = true)
+            }
+        }
+    }
+
+    private fun currentWindowSummaries(): List<InstagramPresence.WindowSummary> {
+        val list = try { windows } catch (_: Throwable) { null } ?: return emptyList()
+        return list.map { w ->
+            val pkg = try { w.root?.packageName?.toString() } catch (_: Throwable) { null }
+            InstagramPresence.WindowSummary(
+                isApplication = w.type == AccessibilityWindowInfo.TYPE_APPLICATION,
+                packageName = pkg,
+            )
+        }
+    }
+
+    private fun registerDebugDumpReceiver() {
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
+        if (debugDumpReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val label = intent.getStringExtra("label") ?: "manual"
+                DebugTreeDump.dump(this@ReelBlockerService, label)
+            }
+        }
+        ContextCompat.registerReceiver(
+            this, receiver, IntentFilter(DebugTreeDump.ACTION), ContextCompat.RECEIVER_EXPORTED,
+        )
+        debugDumpReceiver = receiver
     }
 
     private fun recordEvent(
@@ -865,7 +994,9 @@ class ReelBlockerService : AccessibilityService() {
         } else {
             screen = ReelDetector.detectScreen(root.toSnapshot())
             if (screen != ScreenType.REELS_TAB && screen != ScreenType.REEL_VIEWER) {
-                // Navigation landed. Let the normal event flow reset the mode.
+                // Navigation landed. Let the normal event flow reset the
+                // mode; the cover can come down now.
+                overlay.hideSoon()
                 return
             }
             if (screen == ScreenType.REELS_TAB) {
@@ -882,6 +1013,8 @@ class ReelBlockerService : AccessibilityService() {
             }
         }
         lastBlockAt = System.currentTimeMillis()
+        // Still on the blocked screen: keep the reel covered while we retry.
+        overlay.showBlocked()
         Log.i(TAG, "navRetry attempt=$attempt screen=${screen.name} route=$route")
         DetectionLog.record(
             DetectionLog.Entry(
@@ -1180,7 +1313,12 @@ class ReelBlockerService : AccessibilityService() {
         //    hitting the wrong control, and BACK handles the rest.
         val tabBar = findMainTabBar(node) ?: return false
         val tabNode = findBottomTabNode(tabBar, tabLabel) ?: return false
-        return performClick(tabNode)
+        // Note before clicking: the echo event can be queued while the
+        // click call is still returning.
+        selfTabClickEcho.noteSelfClick(tabLabel, System.currentTimeMillis())
+        val clicked = performClick(tabNode)
+        if (!clicked) selfTabClickEcho.clear()
+        return clicked
     }
 
     private fun findMainTabBar(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -1445,6 +1583,11 @@ class ReelBlockerService : AccessibilityService() {
          *  6 attempts ≈ 4 s of persistence before giving up. */
         private const val NAV_VERIFY_DELAY_MS = 700L
         private const val MAX_NAV_ATTEMPTS = 6
+
+        /** Window-list poll cadence for leave-Instagram detection. Two
+         *  consecutive misses are required, so a departure is noticed
+         *  ~1–2 s after the user switches away. */
+        private const val PRESENCE_POLL_MS = 1000L
 
         private const val CHANNEL_ID = "reel_block_status"
         private const val STATUS_NOTIF_ID = 0xBEEF

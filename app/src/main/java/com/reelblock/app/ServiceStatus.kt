@@ -36,6 +36,4 @@ object ServiceStatus {
         }
         return false
     }
-
-    fun canDrawOverlays(context: Context): Boolean = Settings.canDrawOverlays(context)
 }

@@ -230,4 +230,16 @@ class SessionStateMachineTest {
         assertThat(action).isEqualTo(SessionStateMachine.Action.NONE)
         assertThat(sm.currentMode()).isEqualTo(SessionStateMachine.Mode.IDLE)
     }
+
+    // Bug: tapping (or landing on) Home after a Reels-tab block went
+    // through this reset before the BLOCKING->IDLE check, so the cover
+    // stayed up its full timeout over the Home feed.
+    @Test
+    fun `stable surface reports that it ended a block`() {
+        sm.handleScreen(ScreenType.REELS_TAB, null)
+        assertThat(sm.currentMode()).isEqualTo(SessionStateMachine.Mode.BLOCKING)
+        assertThat(sm.noteStableNonDmSurface()).isTrue()
+        assertThat(sm.currentMode()).isEqualTo(SessionStateMachine.Mode.IDLE)
+        assertThat(sm.noteStableNonDmSurface()).isFalse()
+    }
 }

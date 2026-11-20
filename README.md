@@ -46,15 +46,21 @@ Two independent signals answer it, because either one alone has a failure mode:
 
 The subtlety is which signatures are allowed to trigger that comparison. A signature is either a stable `user:` prefix (the author's username) or a coarse `txt:` caption hash fallback. The caption hash drifts as text loads frame by frame, so comparing two `txt:` signatures produces false BLOCKs on the reel you are legitimately allowed to watch. So the comparison only fires when **both** the latched and the incoming signature are stable `user:` ones. A coarse latch gets upgraded in place the moment a stable signature appears, and a null latch gets filled by the first signature seen, because signatures often load late.
 
-### Prefer `event.source` over `rootInActiveWindow`
+### Which tree to read
 
-The obvious way to snapshot the screen is `rootInActiveWindow`. It is frequently null during window transitions ([issuetracker #223809542](https://issuetracker.google.com/issues/223809542)), which is precisely when a Reels screen is being pushed. Signals were being lost at the exact moment they mattered.
+The obvious way to snapshot the screen is `rootInActiveWindow`. It is frequently null during window transitions ([issuetracker #223809542](https://issuetracker.google.com/issues/223809542)), which is precisely when a Reels screen is being pushed, and on Samsung it can even report the launcher while Instagram is in front.
 
-The service prefers `event.source` and walks up from there, falling back to `rootInActiveWindow` only when it has to. Which source produced a given snapshot is recorded in the detection log, so a misclassification can be traced back to whether the tree was even available.
+The service reads `rootInActiveWindow` when it really is Instagram's window (a full, fresh tree) and falls back to the event's own `event.source` subtree when it is not. Which source produced a given snapshot is recorded in the detection log, so a misclassification can be traced back to whether the tree was even available.
 
 ### Blocking is a sequence, and it verifies itself
 
-On BLOCK the service drops a full-screen overlay so the reel is not visible, fires `GLOBAL_ACTION_BACK` with a short delay, and then **schedules a verification pass** with retries. Firing back once and hoping is not enough; Instagram sometimes eats the first one, or lands you on a screen you did not ask for. The service checks where you actually ended up and escalates, including clicking the last known non-Reels bottom tab directly when it can find it in the tree. The overlay auto-dismisses after about 1.2 seconds, and a cooldown prevents a block loop from fighting the user.
+On BLOCK the service puts up a full-screen cover so the reel is not visible, then navigates away: on the Reels tab it clicks the last non-Reels bottom tab you were on (Home by default), and on a reel opened anywhere else it fires `GLOBAL_ACTION_BACK`. Then it **verifies**: every 700 ms it re-reads the screen and, if you are still on a reel, tries again, up to six times. Firing once and hoping is not enough; Instagram sometimes ignores a click made mid-transition. The click itself echoes back as an accessibility "Home clicked" event, which says nothing about whether Instagram actually switched tabs, so the service ignores the echo of its own click and trusts only the tree.
+
+The cover is an accessibility overlay (`TYPE_ACCESSIBILITY_OVERLAY`), which an accessibility service may draw without the "Display over other apps" permission. It does not take touches, it stays up while the service is still retrying, it comes down 250 ms after you land somewhere allowed, and it can never stay more than 1.2 s past the last attempt, so a failed navigation can't strand Instagram behind it. A cooldown and a consecutive-block circuit breaker keep the service from fighting you in a loop.
+
+### Noticing that you left
+
+The service only receives Instagram's events, so Android never tells it that you switched to another app. While a session is live it checks the on-screen window list once a second; two checks in a row without an Instagram window, with another app in front, count as leaving, and the session state resets. The notification shade and the lock screen don't count.
 
 ### Survivability
 
@@ -108,7 +114,6 @@ The service is scoped to three package names. It is not that the app chooses not
 **Command line** (needs JDK 17 and the Android SDK with `ANDROID_HOME` set):
 
 ```bash
-gradle wrapper --gradle-version 8.7 --distribution-type bin   # one time
 ./gradlew assembleDebug        # macOS / Linux
 gradlew.bat assembleDebug      # Windows
 ./gradlew installDebug         # to a connected device
@@ -121,14 +126,14 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## First-run setup on the phone
 
-Two OS-level grants. The home screen walks you through both and each has a button that jumps straight to the right settings page.
+One OS-level grant, plus the notification prompt on Android 13+. The home screen has a button that jumps straight to the right settings page.
 
-1. **Display over other apps** (`SYSTEM_ALERT_WINDOW`), so the blocking cover can appear on top of Instagram.
-2. **Accessibility Service.** Toggle *Reel Block monitor* on under Settings, Accessibility, Installed services.
+1. **Accessibility Service.** Toggle *Reel It In monitor* on under Settings, Accessibility, Installed services (on Android 13+ you may first need to allow restricted settings from the app's info page if you sideloaded the APK).
+2. **Notifications** (optional), for the status notification.
 
 Android will warn you that an accessibility service can "observe your actions" and "retrieve window content". Reel Block needs exactly that level of access to see which Instagram screen is on top. Because the service is scoped to Instagram's package names only, it cannot observe anything else.
 
-Once both grants are green, flip "Blocking enabled" on and open Instagram. Tap **View live detection log** to watch screens classify in real time.
+Once the accessibility chip is green, flip "Blocking enabled" on and open Instagram. Tap **View live detection log** to watch screens classify in real time.
 
 ---
 
@@ -139,13 +144,11 @@ Everything the manifest declares:
 | Permission / capability | What for |
 |---|---|
 | `BIND_ACCESSIBILITY_SERVICE` (on the `<service>`) | Receiving Instagram's accessibility events. |
-| `SYSTEM_ALERT_WINDOW` | Drawing the full-screen "Reel blocked" cover. |
 | `POST_NOTIFICATIONS` | The ongoing status notification that mirrors the live decision state so you can see what the service is doing without leaving Instagram. |
-| `RECEIVE_BOOT_COMPLETED` | Reserved for optional auto-start behaviour. Not currently wired up. |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | So aggressive OEM battery managers do not kill the service mid-session. |
 | `<queries>` for the three Instagram packages | Package visibility on Android 11+, so the service actually receives Instagram's events. |
 
-No internet permission. No device admin. No root.
+No internet permission, no overlay permission, no device admin, no root. Nothing extra is needed to come back after a reboot: Android rebinds an enabled accessibility service by itself.
 
 ---
 
@@ -172,7 +175,11 @@ app/src/main/java/com/reelblock/app/
   SessionStateMachine.kt        pure ALLOW/BLOCK/NONE policy
   NodeSnapshot.kt               testable copy of an AccessibilityNodeInfo subtree
   ScreenType.kt                 the enum
-  BlockingOverlayController.kt  full-screen cover
+  BlockingOverlayController.kt  full-screen cover (accessibility overlay)
+  CoverTiming.kt                pure: when the cover may come down
+  InstagramPresence.kt          pure: did the user leave Instagram?
+  SelfTabClickEcho.kt           pure: ignore the echo of our own tab click
+  DebugTreeDump.kt              debug builds: dump the live tree to JSON
   DetectionLog.kt               in-memory ring buffer of recent decisions
   MainActivity.kt               dashboard, permission flows, the two switches
   LogActivity.kt                live detection log + clipboard export
@@ -183,6 +190,7 @@ app/src/test/java/com/reelblock/app/
   ReelDetectorTest.kt                 classification
   SessionStateMachineTest.kt          every transition and edge case
   DetectorStateMachineIntegrationTest.kt
+  CoverTimingTest.kt, InstagramPresenceTest.kt, SelfTabClickEchoTest.kt
 ```
 
 ---
@@ -192,9 +200,8 @@ app/src/test/java/com/reelblock/app/
 It works, on the Instagram versions it has been tuned against. Specifically:
 
 - **The detection ruleset is empirical and dated.** It is reverse-engineered from a view tree Instagram can change in any release, with no contract and no notice. Expect to re-tune. The live log exists because of this, not in spite of it.
-- **The service is not small.** `ReelBlockerService.kt` is around 1,450 lines. The pure core it drives is small (`SessionStateMachine.kt` at ~200 lines, `ReelDetector.kt` at ~535), but the Android-facing driver has accumulated the event plumbing, navigation verification, cooldown handling, notification state, and runtime service reconfiguration that a real accessibility service ends up needing. It is the part most in need of a refactor.
+- **The service is not small.** `ReelBlockerService.kt` is around 1,600 lines. The pure core it drives is small (`SessionStateMachine.kt` at ~200 lines, `ReelDetector.kt` at ~535), but the Android-facing driver has accumulated the event plumbing, navigation verification, cooldown handling, notification state, and runtime service reconfiguration that a real accessibility service ends up needing. It is the part most in need of a refactor.
 - **Test coverage stops at the boundary.** The pure classifier and state machine are well covered. The service itself has no tests, because testing it would mean testing the accessibility framework.
-- **`RECEIVE_BOOT_COMPLETED` is declared but unused,** and a `FileProvider` is declared in the manifest that nothing currently uses. Log export goes to the clipboard, deliberately, to avoid share-sheet and MIME negotiation. Both are leftovers worth cleaning up.
 - **Instagram only.** The architecture would extend to TikTok or YouTube Shorts, but nothing in the ruleset does today.
 
 ---

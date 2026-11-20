@@ -34,9 +34,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var settings: SettingsStore
 
-    private lateinit var chipOverlay: TextView
     private lateinit var chipAccessibility: TextView
-    private lateinit var btnOverlay: MaterialButton
     private lateinit var btnAccessibility: MaterialButton
     private lateinit var btnLog: MaterialButton
     private lateinit var statusText: TextView
@@ -55,9 +53,7 @@ class MainActivity : AppCompatActivity() {
 
         settings = SettingsStore(this)
 
-        chipOverlay = findViewById(R.id.chip_overlay)
         chipAccessibility = findViewById(R.id.chip_accessibility)
-        btnOverlay = findViewById(R.id.btn_overlay)
         btnAccessibility = findViewById(R.id.btn_accessibility)
         btnLog = findViewById(R.id.btn_view_log)
         statusText = findViewById(R.id.status_text)
@@ -67,7 +63,6 @@ class MainActivity : AppCompatActivity() {
         switchBlocking = findViewById(R.id.switch_blocking)
         switchDmReels = findViewById(R.id.switch_dm_reels)
 
-        btnOverlay.setOnClickListener { openOverlaySettings() }
         btnAccessibility.setOnClickListener { openAccessibilitySettings() }
         btnLog.setOnClickListener {
             startActivity(Intent(this, LogActivity::class.java))
@@ -119,25 +114,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
-        val hasOverlay = ServiceStatus.canDrawOverlays(this)
         val hasAccessibility = ServiceStatus.isAccessibilityServiceEnabled(this)
 
-        setChip(chipOverlay, hasOverlay,
-            okText = R.string.card_overlay_granted,
-            warnText = R.string.card_overlay_missing)
         setChip(chipAccessibility, hasAccessibility,
             okText = R.string.card_accessibility_enabled,
             warnText = R.string.card_accessibility_disabled)
 
-        btnOverlay.visibility = if (hasOverlay) View.GONE else View.VISIBLE
         btnAccessibility.visibility = if (hasAccessibility) View.GONE else View.VISIBLE
 
         val blockingEnabled = settings.blockingEnabled
-        switchBlocking.isEnabled = hasOverlay && hasAccessibility
+        switchBlocking.isEnabled = hasAccessibility
 
         statusText.setText(
             when {
-                !hasOverlay || !hasAccessibility -> R.string.card_status_paused
+                !hasAccessibility -> R.string.card_status_paused
                 !blockingEnabled -> R.string.card_status_disabled_by_user
                 else -> R.string.card_status_active
             }
@@ -169,14 +159,6 @@ class MainActivity : AppCompatActivity() {
         chip.setText(if (ok) okText else warnText)
         chip.setBackgroundResource(if (ok) R.drawable.bg_chip_ok else R.drawable.bg_chip_warn)
         chip.setTextColor(getColor(if (ok) R.color.rb_chip_ok_fg else R.color.rb_chip_warn_fg))
-    }
-
-    private fun openOverlaySettings() {
-        val intent = Intent(
-            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            Uri.parse("package:$packageName"),
-        )
-        startActivity(intent)
     }
 
     private fun openAccessibilitySettings() {

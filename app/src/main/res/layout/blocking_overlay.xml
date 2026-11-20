@@ -1,48 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Full-screen cover shown for the instant a reel is blocked. It is
+     opaque so the reel is never visible while the service navigates
+     away, and not touchable / not focusable so it can never intercept
+     input or steal focus from Instagram. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:gravity="center_vertical"
-    android:paddingHorizontal="18dp"
-    android:paddingTop="36dp"
-    android:paddingBottom="16dp"
-    android:background="@drawable/bg_overlay_banner"
+    android:layout_height="match_parent"
+    android:background="@color/rb_bg"
+    android:gravity="center"
+    android:orientation="vertical"
     android:clickable="false"
     android:focusable="false"
-    android:fitsSystemWindows="false"
-    android:importantForAccessibility="noHideDescendants"
-    android:elevation="12dp">
+    android:importantForAccessibility="noHideDescendants">
 
     <ImageView
-        android:layout_width="32dp"
-        android:layout_height="32dp"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
         android:contentDescription="@null"
         android:src="@drawable/ic_shield" />
 
-    <LinearLayout
-        android:layout_width="0dp"
+    <TextView
+        android:id="@+id/blocking_title"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="14dp"
-        android:layout_weight="1"
-        android:orientation="vertical">
+        android:layout_marginTop="16dp"
+        android:text="@string/reel_blocked_title"
+        android:textColor="@color/rb_on_surface"
+        android:textSize="22sp"
+        android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/blocking_title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="@color/rb_on_surface"
-            android:textSize="15sp"
-            android:textStyle="bold"
-            android:text="@string/reel_blocked_title" />
-
-        <TextView
-            android:id="@+id/blocking_subtitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:textColor="@color/rb_on_surface_muted"
-            android:textSize="12sp"
-            android:text="@string/reel_blocked_subtitle" />
-    </LinearLayout>
+    <TextView
+        android:id="@+id/blocking_subtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:paddingHorizontal="32dp"
+        android:gravity="center"
+        android:text="@string/reel_blocked_subtitle"
+        android:textColor="@color/rb_on_surface_muted"
+        android:textSize="14sp" />
 </LinearLayout>
