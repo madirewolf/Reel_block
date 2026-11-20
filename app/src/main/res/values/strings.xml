@@ -57,4 +57,5 @@
     <string name="card_battery_body">Samsung, Xiaomi, OnePlus and others kill background accessibility services to save battery. Disable battery optimization for Reel It In and lock the app in recents for reliable blocking.</string>
     <string name="card_battery_open">Disable battery optimization</string>
     <string name="card_battery_guide_open">Open OEM survival guide</string>
+    <string name="feed_reel_hidden">Reel hidden</string>
 </resources>

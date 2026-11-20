@@ -31,6 +31,152 @@ object ReelDetector {
      *  compare when deciding "did the user swipe to another reel?". */
     const val SIGNATURE_USER_PREFIX = "user:"
 
+    // Stable labels for the bottom-nav tabs, used by the service to
+    // remember where to send the user back to.
+    const val TAB_HOME = "home"
+    const val TAB_SEARCH = "search"
+    const val TAB_REELS = "reels"
+    const val TAB_DIRECT = "direct"
+    const val TAB_PROFILE = "profile"
+    const val TAB_NOTIFICATIONS = "notifications"
+
+    /** Ids of the bottom navigation bar. Instagram 457 calls it plain
+     *  `tab_bar`; older builds used `main_tab_bar` / `tab_bar_container`.
+     *  Matched on the id segment so `tab_bar_shadow` doesn't count. */
+    private val TAB_BAR_ID_SEGMENTS = setOf("tab_bar", "main_tab_bar", "tab_bar_container")
+
+    /** Bottom-nav tab button ids (Instagram 457). Locale-independent,
+     *  unlike the content descriptions. */
+    private val TAB_ID_SEGMENTS = mapOf(
+        "feed_tab" to TAB_HOME,
+        "search_tab" to TAB_SEARCH,
+        "clips_tab" to TAB_REELS,
+        "direct_tab" to TAB_DIRECT,
+        "profile_tab" to TAB_PROFILE,
+        "news_tab" to TAB_NOTIFICATIONS,
+    )
+
+    fun isTabBarId(viewId: String?): Boolean {
+        val seg = viewId?.lowercase()?.substringAfterLast('/') ?: return false
+        return seg in TAB_BAR_ID_SEGMENTS
+    }
+
+    /**
+     * Home-feed post ids, Instagram 457. A post is a header
+     * (`row_feed_profile_header`, "x posted a video 3 days ago") above or
+     * over its media box (`media_group`). Before a reel plays, the box
+     * holds a thumbnail (`row_feed_photo_imageview`, "Reel by x"); while
+     * it plays the box holds only the video surface; when it ends a
+     * "Watch more reels" button appears in it.
+     */
+    const val FEED_MEDIA_GROUP_ID = "media_group"
+    const val FEED_MEDIA_IMAGE_ID = "row_feed_photo_imageview"
+    const val FEED_HEADER_ID = "row_feed_profile_header"
+    const val FEED_REEL_CTA_ID = "feed_preview_keep_watching_button"
+
+    private val FEED_REEL_DESCRIPTION =
+        Regex("""^(?:\p{L}+\s+)?(?:reel|video) by\b""", RegexOption.IGNORE_CASE)
+    private val FEED_POSTED_HEADER = Regex("""\bposted an? \w+""", RegexOption.IGNORE_CASE)
+    private val FEED_VIDEO_HEADER = Regex("""\bposted an? (?:video|reel)\b""", RegexOption.IGNORE_CASE)
+
+    /** True when a feed thumbnail description names a reel (or a video,
+     *  which Instagram now plays as a reel): "Reel by x", "Sponsored Reel by x". */
+    fun isFeedReelDescription(desc: CharSequence?): Boolean =
+        desc != null && FEED_REEL_DESCRIPTION.containsMatchIn(desc.trim())
+
+    enum class FeedNodeKind { MEDIA_GROUP, MEDIA_IMAGE, HEADER, REEL_CTA }
+
+    /** A Home-feed node as the service read it (one id lookup per kind). */
+    data class FeedNode(
+        val kind: FeedNodeKind,
+        val description: String?,
+        val rect: ScreenRect,
+        val visible: Boolean = true,
+    )
+
+    /**
+     * Screen areas to cover for the "Hide reels in Home feed" option: the
+     * media box of every reel post on screen. A box is a reel when its
+     * thumbnail says so, when it shows the end-of-reel button, or — with
+     * no thumbnail description in it (a video is playing) — when the
+     * post's header says "posted a video". Headers are used even when not
+     * visible (see below); everything else must be on screen.
+     */
+    fun feedReelRects(nodes: List<FeedNode>): List<ScreenRect> {
+        val visible = nodes.filter { it.visible && it.rect.width > 0 && it.rect.height > 0 }
+        val headers = nodes.filter { it.kind == FeedNodeKind.HEADER }
+        fun inside(n: FeedNode, box: ScreenRect): Boolean {
+            val cx = (n.rect.left + n.rect.right) / 2
+            val cy = (n.rect.top + n.rect.bottom) / 2
+            return cx in box.left..box.right && cy in box.top..box.bottom
+        }
+        return visible.filter { it.kind == FeedNodeKind.MEDIA_GROUP }
+            .filter { group ->
+                val box = group.rect
+                val thumbs = visible.filter {
+                    it.kind == FeedNodeKind.MEDIA_IMAGE && !it.description.isNullOrBlank() && inside(it, box)
+                }
+                when {
+                    thumbs.any { isFeedReelDescription(it.description) } -> true
+                    thumbs.isNotEmpty() -> false
+                    visible.any { it.kind == FeedNodeKind.REEL_CTA && inside(it, box) } -> true
+                    else -> {
+                        // No described thumbnail: a video is playing (a
+                        // photo always keeps its "Photo by" thumbnail).
+                        // The post's header ("x posted a video") lies over
+                        // the top of the box or just above it, and settles
+                        // it when present. Scrolled off screen, it either
+                        // stays in the tree (not visible, top clamped to
+                        // the list's top edge, which is the box's top
+                        // too) or is gone; with no header, trust the
+                        // missing thumbnail.
+                        val header = headers.firstOrNull {
+                            it.rect.top in (box.top - HEADER_REACH_PX)..(box.top + HEADER_SLOP_PX) &&
+                                FEED_POSTED_HEADER.containsMatchIn(it.description.orEmpty())
+                        }
+                        header == null || FEED_VIDEO_HEADER.containsMatchIn(header.description.orEmpty())
+                    }
+                }
+            }
+            .map { it.rect }
+            .distinct()
+    }
+
+    private const val HEADER_SLOP_PX = 24
+
+    /** How far above its media box a post header may start (a header is
+     *  ~140 px tall on a 1080 px wide screen). */
+    private const val HEADER_REACH_PX = 260
+
+    /** Tab bar id segments, most current first, for direct id lookups. */
+    val TAB_BAR_ID_LOOKUP: List<String> = listOf("tab_bar", "main_tab_bar", "tab_bar_container")
+
+    /** The view-id segment of the bottom-nav button for [tabLabel], or null. */
+    fun tabViewIdSegment(tabLabel: String): String? =
+        TAB_ID_SEGMENTS.entries.firstOrNull { it.value == tabLabel }?.key
+
+    /** Tab label for a bottom-nav button id, or null. */
+    fun tabLabelFromViewId(viewId: String?): String? {
+        val seg = viewId?.lowercase()?.substringAfterLast('/') ?: return null
+        return TAB_ID_SEGMENTS[seg]
+    }
+
+    /** Tab label for a bottom-nav button's content description
+     *  ("Home", "Reels", "Search and explore", "Message", ...), or null. */
+    fun tabLabelFromDescription(desc: CharSequence?): String? {
+        val d = desc?.toString()?.trim()?.lowercase() ?: return null
+        fun word(w: String) = d == w || d.startsWith("$w,") || d.startsWith("$w ")
+        return when {
+            word("home") -> TAB_HOME
+            word("search") -> TAB_SEARCH
+            word("reels") -> TAB_REELS
+            word("profile") -> TAB_PROFILE
+            word("notifications") -> TAB_NOTIFICATIONS
+            word("message") || word("messages") || word("direct") -> TAB_DIRECT
+            else -> null
+        }
+    }
+
     data class TreeDebug(
         val nodeCount: Int,
         val maxDepth: Int,
@@ -122,28 +268,35 @@ object ReelDetector {
     fun classifyByBottomNavEvent(
         eventType: Int,
         eventContentDescription: CharSequence?,
+        sourceViewId: String? = null,
     ): ScreenType? {
         if (eventType != android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED &&
             eventType != android.view.accessibility.AccessibilityEvent.TYPE_VIEW_SELECTED
         ) {
             return null
         }
-        val desc = eventContentDescription?.toString()?.trim()?.lowercase() ?: return null
-        return when {
-            desc == "reels" || desc.startsWith("reels,") ||
-                desc.startsWith("reels ") || desc.startsWith("reels tab")
-                -> ScreenType.REELS_TAB
-            desc == "home" || desc.startsWith("home,") ||
-                desc.startsWith("home ") || desc.startsWith("home tab") ||
-                desc == "search" || desc.startsWith("search,") ||
-                desc.startsWith("search ") || desc.startsWith("search tab") ||
-                desc == "profile" || desc.startsWith("profile,") ||
-                desc.startsWith("profile ") || desc.startsWith("profile tab") ||
-                desc == "notifications" || desc.startsWith("notifications,") ||
-                desc.startsWith("notifications ") || desc.startsWith("notifications tab")
-                -> ScreenType.OTHER
-            else -> null
+        val tab = bottomNavTabForEvent(eventContentDescription, sourceViewId) ?: return null
+        return when (tab) {
+            TAB_REELS -> ScreenType.REELS_TAB
+            TAB_DIRECT -> ScreenType.DM_INBOX
+            else -> ScreenType.OTHER
         }
+    }
+
+    /**
+     * Which bottom-nav tab a click/select event is for, or null when it
+     * isn't a bottom-nav tap. A known tab id decides. Any other id means
+     * a different control: another user's profile has a "Reels" grid
+     * tab, and treating that tap as the Reels tab blocked their profile.
+     * Only an event with no id at all falls back to the description.
+     */
+    fun bottomNavTabForEvent(
+        eventContentDescription: CharSequence?,
+        sourceViewId: String?,
+    ): String? {
+        tabLabelFromViewId(sourceViewId)?.let { return it }
+        if (sourceViewId != null) return null
+        return tabLabelFromDescription(eventContentDescription)
     }
 
     /**
@@ -207,17 +360,19 @@ object ReelDetector {
         //    substring. The real inbox never shows the bottom nav, so
         //    it is classified by the fullscreen branch below.
         val selectedTab = extractSelectedBottomTabFromNodes(nodes)
-        if (selectedTab != null && selectedTab != "reels") {
+        if (selectedTab != null && selectedTab != TAB_REELS) {
             // Story viewer wins over the thread-marker check: the story
             // reply box ("Send message") is exactly what the composer
             // fallback matches.
             if (hasStoryViewerMarkers(nodes)) return ScreenType.OTHER
             if (hasDmThreadMarkers(nodes)) return ScreenType.DM_THREAD
+            // Instagram 457 made Messages a bottom tab ("direct_tab").
+            if (selectedTab == TAB_DIRECT) return ScreenType.DM_INBOX
             return ScreenType.OTHER
         }
 
         // 2. Reels tab is the *only* selected bottom-nav item — block.
-        if (selectedTab == "reels") return ScreenType.REELS_TAB
+        if (selectedTab == TAB_REELS) return ScreenType.REELS_TAB
 
         // 3. contentDescription-based bottom-nav check above failed
         //    (obfuscated build or missing a11y labels) but the clips_tab
@@ -422,12 +577,8 @@ object ReelDetector {
         return nodesHaveMainTabBar(root.flatten().toList())
     }
 
-    private fun nodesHaveMainTabBar(nodes: List<NodeSnapshot>): Boolean {
-        return nodes.any { node ->
-            val id = node.viewIdResourceName?.lowercase() ?: return@any false
-            id.contains("main_tab_bar") || id.contains("tab_bar_container")
-        }
-    }
+    private fun nodesHaveMainTabBar(nodes: List<NodeSnapshot>): Boolean =
+        nodes.any { isTabBarId(it.viewIdResourceName) }
 
     fun extractSelectedBottomTab(root: NodeSnapshot?): String? {
         if (root == null) return null
@@ -435,36 +586,33 @@ object ReelDetector {
     }
 
     /**
-     * Walks the tree looking for bottom-nav tab buttons that report
-     * `isSelected=true`. Returns the first non-Reels tab if one is
-     * selected, only returning "reels" when nothing else is. This
-     * preference matters because Samsung's accessibility tree can
+     * Which bottom-nav tab reports `isSelected=true`.
+     *
+     * Only the bottom bar is searched when it is in the tree: the Reels
+     * page's own "Reels | Friends" header and another user's profile
+     * "Reels" grid tab are also selected nodes described "Reels", and
+     * must not read as the Reels tab. Tab ids win over descriptions.
+     * Without a recognisable bar (older builds) the whole tree is
+     * searched by description.
+     *
+     * Returns the first non-Reels tab if one is selected, only returning
+     * "reels" when nothing else is. Samsung's accessibility tree can
      * report BOTH the previously-selected and newly-selected tabs as
-     * `isSelected=true` during the 300–700 ms window after a tap,
-     * which naive first-match logic classified as REELS_TAB whenever
-     * Reels happened to be traversed first — causing legitimate taps
-     * on Search/Home/Profile to trigger the Reels-block routine.
+     * `isSelected=true` for 300–700 ms after a tap; naive first-match
+     * logic made taps on Search/Home/Profile trigger the Reels block.
      */
     private fun extractSelectedBottomTabFromNodes(nodes: List<NodeSnapshot>): String? {
+        val tabBar = nodes.firstOrNull { isTabBarId(it.viewIdResourceName) }
+        val candidates = tabBar?.flatten()?.toList() ?: nodes
         var reelsSeen = false
-        for (node in nodes) {
+        for (node in candidates) {
             if (!node.isSelected) continue
-            val desc = node.contentDescription?.trim()?.lowercase() ?: continue
-            val tab = when {
-                desc == "home" || desc.startsWith("home,") || desc.startsWith("home ") || desc.startsWith("home tab") -> "home"
-                desc == "search" || desc.startsWith("search,") || desc.startsWith("search ") || desc.startsWith("search tab") -> "search"
-                desc == "reels" || desc.startsWith("reels,") || desc.startsWith("reels ") || desc.startsWith("reels tab") -> "reels"
-                desc == "profile" || desc.startsWith("profile,") || desc.startsWith("profile ") || desc.startsWith("profile tab") -> "profile"
-                desc == "notifications" || desc.startsWith("notifications,") || desc.startsWith("notifications ") || desc.startsWith("notifications tab") -> "notifications"
-                else -> null
-            }
-            if (tab == "reels") {
-                reelsSeen = true
-            } else if (tab != null) {
-                return tab
-            }
+            val tab = tabLabelFromViewId(node.viewIdResourceName)
+                ?: tabLabelFromDescription(node.contentDescription)
+                ?: continue
+            if (tab == TAB_REELS) reelsSeen = true else return tab
         }
-        return if (reelsSeen) "reels" else null
+        return if (reelsSeen) TAB_REELS else null
     }
 
     private fun countReelViewerIdMarkers(nodes: List<NodeSnapshot>): Int {

@@ -18,5 +18,8 @@
     <color name="rb_chip_warn">#4A2A00</color>
     <color name="rb_chip_warn_fg">#FBBF24</color>
 
+    <color name="rb_cover">#121212</color>
+    <color name="rb_cover_text">#8C8C8C</color>
+
     <color name="ic_launcher_background">#1C1430</color>
 </resources>

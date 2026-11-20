@@ -13,6 +13,7 @@ import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.os.Build
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -103,6 +104,32 @@ class ReelBlockerService : AccessibilityService() {
      *  classifications because its tree is unreachable. */
     private var lastBlockedScreenEventAt: Long = 0L
 
+    /**
+     * Tree walks are coalesced: an event that needs the tree only parks a
+     * copy here and posts [treeWalkRunnable]; the walk then reads the
+     * CURRENT tree once for every event that arrived meanwhile.
+     *
+     * Reading Instagram's tree costs ~100-150 ms of IPC (Instagram's UI
+     * thread answers every node request between video frames), while it
+     * fires a content change every ~80 ms. Walking once per event built
+     * an ever-growing queue on the main thread: the service acted on
+     * screens seconds old, blocked the reel after the one on screen, and
+     * the cover and BACK presses waited behind the backlog (a phone log
+     * showed the cover stuck up for 3.4 s).
+     */
+    private var pendingWalkEvent: AccessibilityEvent? = null
+
+    /** Boxes over reels inside the Home feed ("Hide reels in Home feed"). */
+    private lateinit var feedCovers: FeedReelCovers
+
+    /** True while the last classified screen was the Home tab. */
+    private var onHomeFeed = false
+    private var feedRefreshPosted = false
+    private var feedCoverCountLogged = -1
+    private val feedRefreshRunnable = Runnable { refreshFeedReelCovers() }
+    private var treeWalkPosted = false
+    private val treeWalkRunnable = Runnable { runPendingTreeWalk() }
+
     /** Our own tab clicks echo back as click events; see [SelfTabClickEcho]. */
     private val selfTabClickEcho = SelfTabClickEcho()
 
@@ -122,8 +149,14 @@ class ReelBlockerService : AccessibilityService() {
                     stateMachine.reset()
                     clearBlockingCooldown()
                     overlay.hide()
+                    feedCovers.clear()
+                } else {
+                    scheduleFeedRefresh()
                 }
                 updateStatusNotification(note = if (settings.blockingEnabled) "blocking on" else "blocking off", force = true)
+            }
+            SettingsStore.KEY_HIDE_FEED_REELS -> {
+                if (settings.hideFeedReels) scheduleFeedRefresh() else feedCovers.clear()
             }
             SettingsStore.KEY_ALLOW_DM_REELS -> {
                 stateMachine.allowDmReels = settings.allowDmReels
@@ -164,6 +197,7 @@ class ReelBlockerService : AccessibilityService() {
     override fun onCreate() {
         super.onCreate()
         overlay = BlockingOverlayController(this)
+        feedCovers = FeedReelCovers(this)
         settings = SettingsStore(this)
         stateMachine.allowDmReels = settings.allowDmReels
         settings.registerListener(settingsListener)
@@ -234,6 +268,8 @@ class ReelBlockerService : AccessibilityService() {
             presence.onInstagramEvidence()
         }
 
+        if (onHomeFeed) scheduleFeedRefresh()
+
         // ---- FAST PATH A: classify directly from the event itself ----
         // Tab taps fire TYPE_VIEW_CLICKED / TYPE_VIEW_SELECTED whose
         // contentDescription is the tab label ("Reels", "Home", …).
@@ -242,17 +278,32 @@ class ReelBlockerService : AccessibilityService() {
         // than leaving us to disambiguate two concurrently-"selected"
         // tabs in the stale accessibility tree. Prioritise it above
         // the class-name fast path and the tree walk.
+        // The source id tells a bottom-nav tab apart from look-alike
+        // controls (another user's profile has a "Reels" grid tab).
+        val isTapEvent = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SELECTED
+        val tapSourceId: String? = if (isTapEvent) {
+            try {
+                event.source?.viewIdResourceName
+            } catch (_: Throwable) {
+                null
+            }
+        } else null
+        val navEventTab = if (isTapEvent) {
+            ReelDetector.bottomNavTabForEvent(event.contentDescription, tapSourceId)
+        } else null
         val rawNavEventScreen = ReelDetector.classifyByBottomNavEvent(
             event.eventType,
             event.contentDescription,
+            tapSourceId,
         )
-        // The echo of our own Home-tab click says nothing about whether
+        // The echo of our own tab click says nothing about whether
         // Instagram switched tabs; let the tree walk decide instead.
         val navEventScreen = if (
-            rawNavEventScreen == ScreenType.OTHER &&
+            (rawNavEventScreen == ScreenType.OTHER || rawNavEventScreen == ScreenType.DM_INBOX) &&
             selfTabClickEcho.consumeIfEcho(
                 isClickEvent = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED,
-                eventTabLabel = tabLabelFromNavEvent(event.contentDescription),
+                eventTabLabel = navEventTab,
                 now = handleStart,
             )
         ) null else rawNavEventScreen
@@ -298,6 +349,9 @@ class ReelBlockerService : AccessibilityService() {
         if (fastScreen == ScreenType.DM_THREAD || fastScreen == ScreenType.DM_INBOX) {
             // DM / inbox screens don't need a tree — latch the screen so
             // the next reel viewer is allowed.
+            if (navEventScreen == ScreenType.DM_INBOX) {
+                lastNonReelsBottomTab = ReelDetector.TAB_DIRECT
+            }
             handleClassifiedScreen(
                 event = event,
                 eventClassName = eventClassName,
@@ -317,9 +371,8 @@ class ReelBlockerService : AccessibilityService() {
             // Stash the tab label so the next Reels-block has a valid
             // navigation target even before the slow-path tree walk
             // has a chance to repopulate it.
-            tabLabelFromNavEvent(event.contentDescription)?.let { tab ->
-                lastNonReelsBottomTab = tab
-            }
+            navEventTab?.let { tab -> lastNonReelsBottomTab = tab }
+            setOnHomeFeed(navEventTab == ReelDetector.TAB_HOME)
             // Explicit tab tap = definitive "user left DM context".
             // Wipe any stale DM-allowed-reel mode + lastKnownScreen
             // that could have otherwise let the next reel through as
@@ -339,7 +392,35 @@ class ReelBlockerService : AccessibilityService() {
             return
         }
 
-        // ---- SLOW PATH: walk the tree ----
+        // ---- SLOW PATH: walk the tree (coalesced) ----
+        enqueueTreeWalk(event)
+    }
+
+    private fun enqueueTreeWalk(event: AccessibilityEvent) {
+        val previous = pendingWalkEvent
+        // A scroll carries the pager page index the DM-reel swipe check
+        // needs; a later content change must not overwrite it.
+        val keepPrevious = previous != null &&
+            previous.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
+            event.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED
+        if (!keepPrevious) {
+            @Suppress("DEPRECATION")
+            pendingWalkEvent = AccessibilityEvent.obtain(event)
+        }
+        if (!treeWalkPosted) {
+            treeWalkPosted = true
+            handler.post(treeWalkRunnable)
+        }
+    }
+
+    private fun runPendingTreeWalk() {
+        treeWalkPosted = false
+        val event = pendingWalkEvent ?: return
+        pendingWalkEvent = null
+        if (!settings.blockingEnabled) return
+        val handleStart = System.currentTimeMillis()
+        val eventClassName = event.className?.toString()
+
         val sourceNode: AccessibilityNodeInfo? = try {
             event.source
         } catch (_: Throwable) {
@@ -411,8 +492,8 @@ class ReelBlockerService : AccessibilityService() {
         // even though the bottom nav is visibly drawn — the net effect
         // was DM context lingering stuck on `lastKnownScreen=DM_THREAD`
         // past the user's exit from DMs, and the next reel would slip
-        // through as "came from DM, allow". Fall back to "main_tab_bar
-        // is anywhere in the tree" which is a strict superset: the
+        // through as "came from DM, allow". Fall back to "the tab bar
+        // is on screen" which is a strict superset: the
         // presence of the bottom nav proves we are not in a DM overlay
         // or fullscreen reel viewer.
         val hasMainTabBar = ReelDetector.treeHasMainTabBar(snapshot)
@@ -422,6 +503,7 @@ class ReelBlockerService : AccessibilityService() {
         if (!selectedBottomTab.isNullOrBlank() && selectedBottomTab != "reels") {
             lastNonReelsBottomTab = selectedBottomTab
         }
+        setOnHomeFeed(screen == ScreenType.OTHER && selectedBottomTab == ReelDetector.TAB_HOME)
         val signature = if (screen == ScreenType.REEL_VIEWER || screen == ScreenType.REELS_TAB) {
             ReelDetector.extractReelSignature(snapshot)
         } else null
@@ -574,6 +656,7 @@ class ReelBlockerService : AccessibilityService() {
         val stableNonDmSurface = resolvedScreen == ScreenType.OTHER &&
             !selectedBottomTab.isNullOrBlank() &&
             selectedBottomTab != "reels"
+        if (resolvedScreen != ScreenType.OTHER) setOnHomeFeed(false)
 
         val priorMode = stateMachine.currentMode()
         val previousScreenBefore = stateMachine.currentPrevScreen()
@@ -693,6 +776,7 @@ class ReelBlockerService : AccessibilityService() {
         handler.removeCallbacksAndMessages(null)
         presenceWatchActive = false
         overlay.hide()
+        feedCovers.clear()
         notifMgr.cancel(STATUS_NOTIF_ID)
         super.onDestroy()
     }
@@ -706,6 +790,61 @@ class ReelBlockerService : AccessibilityService() {
         stateMachine.reset()
         clearBlockingCooldown()
         overlay.hide()
+        setOnHomeFeed(false)
+    }
+
+    private fun setOnHomeFeed(value: Boolean) {
+        onHomeFeed = value
+        if (value) scheduleFeedRefresh() else feedCovers.clear()
+    }
+
+    private fun scheduleFeedRefresh() {
+        if (feedRefreshPosted) return
+        feedRefreshPosted = true
+        handler.post(feedRefreshRunnable)
+    }
+
+    /**
+     * Covers every reel on screen in the Home feed. One id lookup
+     * (`row_feed_photo_imageview`) instead of a tree walk, so the boxes
+     * keep up with scrolling.
+     */
+    private fun refreshFeedReelCovers() {
+        feedRefreshPosted = false
+        if (!onHomeFeed || !settings.blockingEnabled || !settings.hideFeedReels) {
+            feedCovers.clear()
+            return
+        }
+        val root = currentInstagramRoot() ?: return
+        val pkg = root.packageName?.toString() ?: return
+        val t0 = System.currentTimeMillis()
+        val nodes = listOf(
+            ReelDetector.FeedNodeKind.MEDIA_GROUP to ReelDetector.FEED_MEDIA_GROUP_ID,
+            ReelDetector.FeedNodeKind.MEDIA_IMAGE to ReelDetector.FEED_MEDIA_IMAGE_ID,
+            ReelDetector.FeedNodeKind.HEADER to ReelDetector.FEED_HEADER_ID,
+            ReelDetector.FeedNodeKind.REEL_CTA to ReelDetector.FEED_REEL_CTA_ID,
+        ).flatMap { (kind, id) ->
+            val hits = try {
+                root.findAccessibilityNodeInfosByViewId("$pkg:id/$id")
+            } catch (_: Throwable) {
+                emptyList()
+            }
+            hits.map { n ->
+                val r = Rect().also { n.getBoundsInScreen(it) }
+                ReelDetector.FeedNode(
+                    kind = kind,
+                    description = n.contentDescription?.toString(),
+                    rect = ScreenRect(r.left, r.top, r.right, r.bottom),
+                    visible = n.isVisibleToUser,
+                )
+            }
+        }
+        val rects = ReelDetector.feedReelRects(nodes)
+        if (rects.size != feedCoverCountLogged) {
+            feedCoverCountLogged = rects.size
+            Log.d(TAG, "feed reels=${rects.size} nodes=${nodes.size} lookup=${System.currentTimeMillis() - t0}ms")
+        }
+        feedCovers.show(rects)
     }
 
     private fun startPresenceWatch() {
@@ -827,7 +966,9 @@ class ReelBlockerService : AccessibilityService() {
             TAG,
             "$eventTypeName scr=${screen.name} act=${action.name} " +
                 "mode=${stateMachine.currentMode().name} selTab=${selectedBottomTab ?: "-"} " +
-                "sig=${signature ?: "-"} route=${blockRoute ?: "-"}$scrollInfo$repeatNote",
+                "sig=${signature ?: "-"} route=${blockRoute ?: "-"} " +
+                "lat=${handleLatencyMs ?: -1}ms age=${android.os.SystemClock.uptimeMillis() - event.eventTime}ms " +
+                "nodes=${nodeCount ?: -1}$scrollInfo$repeatNote",
         )
 
         DetectionLog.record(
@@ -1159,25 +1300,6 @@ class ReelBlockerService : AccessibilityService() {
 
     private fun isInstagramPackage(pkg: String): Boolean = pkg in INSTAGRAM_PACKAGES
 
-    /** Map a bottom-nav tap event's contentDescription to a stable
-     *  tab-label used by [clickBottomTab]. Mirrors the set understood
-     *  by [findBottomTabNode] so a tap we observed here is guaranteed
-     *  to be clickable later if we need to navigate back. */
-    private fun tabLabelFromNavEvent(desc: CharSequence?): String? {
-        val d = desc?.toString()?.trim()?.lowercase() ?: return null
-        return when {
-            d == "home" || d.startsWith("home,") ||
-                d.startsWith("home ") || d.startsWith("home tab") -> "home"
-            d == "search" || d.startsWith("search,") ||
-                d.startsWith("search ") || d.startsWith("search tab") -> "search"
-            d == "profile" || d.startsWith("profile,") ||
-                d.startsWith("profile ") || d.startsWith("profile tab") -> "profile"
-            d == "notifications" || d.startsWith("notifications,") ||
-                d.startsWith("notifications ") || d.startsWith("notifications tab") -> "notifications"
-            else -> null
-        }
-    }
-
     private fun selectInstagramNode(
         rootNode: AccessibilityNodeInfo?,
         sourceNode: AccessibilityNodeInfo?,
@@ -1301,7 +1423,7 @@ class ReelBlockerService : AccessibilityService() {
         tabLabel: String,
     ): Boolean {
         if (node == null) return false
-        // Only ever click inside the main_tab_bar subtree. Two field
+        // Only ever click inside the bottom tab bar's subtree. Two field
         // incidents mandate this strictness:
         //  - Searching the whole tree for a "home…" description can
         //    match content chips ("home decor") or the top search bar.
@@ -1311,8 +1433,10 @@ class ReelBlockerService : AccessibilityService() {
         //    sheet for the user. Node-scoped ACTION_CLICK is the only
         //    safe click: a stale node's click fails instead of
         //    hitting the wrong control, and BACK handles the rest.
-        val tabBar = findMainTabBar(node) ?: return false
-        val tabNode = findBottomTabNode(tabBar, tabLabel) ?: return false
+        val tabNode = findTabByViewId(node, tabLabel) ?: run {
+            val tabBar = findMainTabBar(node) ?: return false
+            findBottomTabNode(tabBar, tabLabel)
+        } ?: return false
         // Note before clicking: the echo event can be queued while the
         // click call is still returning.
         selfTabClickEcho.noteSelfClick(tabLabel, System.currentTimeMillis())
@@ -1321,37 +1445,74 @@ class ReelBlockerService : AccessibilityService() {
         return clicked
     }
 
+    /**
+     * Direct id lookup of the tab button (`<pkg>:id/feed_tab`), checked to
+     * sit inside the visible tab bar. One IPC round trip, where walking the
+     * tree to the bar cost ~600 ms on a phone (Instagram keeps every
+     * off-screen tab page in the tree).
+     */
+    private fun findTabByViewId(root: AccessibilityNodeInfo, tabLabel: String): AccessibilityNodeInfo? {
+        val pkg = root.packageName?.toString() ?: return null
+        val seg = ReelDetector.tabViewIdSegment(tabLabel) ?: return null
+        val hits = try {
+            root.findAccessibilityNodeInfosByViewId("$pkg:id/$seg")
+        } catch (_: Throwable) {
+            return null
+        }
+        return hits.firstOrNull { it.isVisibleToUser && isInsideTabBar(it) }
+    }
+
+    private fun isInsideTabBar(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = try { node.parent } catch (_: Throwable) { null }
+        repeat(6) {
+            val n = current ?: return false
+            if (ReelDetector.isTabBarId(n.viewIdResourceName)) return true
+            current = try { n.parent } catch (_: Throwable) { null }
+        }
+        return false
+    }
+
     private fun findMainTabBar(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val id = node.viewIdResourceName?.lowercase()
-        if (id != null && (id.contains("main_tab_bar") || id.contains("tab_bar_container"))) {
+        val pkg = node.packageName?.toString()
+        if (pkg != null) {
+            for (seg in ReelDetector.TAB_BAR_ID_LOOKUP) {
+                val hit = try {
+                    node.findAccessibilityNodeInfosByViewId("$pkg:id/$seg")
+                } catch (_: Throwable) {
+                    emptyList()
+                }.firstOrNull { it.isVisibleToUser }
+                if (hit != null) return hit
+            }
+        }
+        return findMainTabBarWalk(node)
+    }
+
+    private fun findMainTabBarWalk(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (ReelDetector.isTabBarId(node.viewIdResourceName) && node.isVisibleToUser) {
             return node
         }
+        if (!node.isVisibleToUser) return null
         for (i in 0 until node.childCount) {
             val child = try {
                 node.getChild(i)
             } catch (_: Throwable) {
                 null
             } ?: continue
-            val match = findMainTabBar(child)
+            val match = findMainTabBarWalk(child)
             if (match != null) return match
         }
         return null
     }
 
+    /** The tab button for [tabLabel] inside the tab bar: by id first
+     *  (`feed_tab`, `direct_tab`, ...), else by description. */
     private fun findBottomTabNode(
         node: AccessibilityNodeInfo,
         tabLabel: String,
     ): AccessibilityNodeInfo? {
-        val desc = node.contentDescription?.toString()?.trim()?.lowercase()
-        val matches = when (tabLabel) {
-            "home" -> desc == "home" || desc?.startsWith("home,") == true || desc?.startsWith("home ") == true || desc?.startsWith("home tab") == true
-            "search" -> desc == "search" || desc?.startsWith("search,") == true || desc?.startsWith("search ") == true || desc?.startsWith("search tab") == true
-            "reels" -> desc == "reels" || desc?.startsWith("reels,") == true || desc?.startsWith("reels ") == true || desc?.startsWith("reels tab") == true
-            "profile" -> desc == "profile" || desc?.startsWith("profile,") == true || desc?.startsWith("profile ") == true || desc?.startsWith("profile tab") == true
-            "notifications" -> desc == "notifications" || desc?.startsWith("notifications,") == true || desc?.startsWith("notifications ") == true || desc?.startsWith("notifications tab") == true
-            else -> false
-        }
-        if (matches) return node
+        val tab = ReelDetector.tabLabelFromViewId(node.viewIdResourceName)
+            ?: ReelDetector.tabLabelFromDescription(node.contentDescription)
+        if (tab == tabLabel) return node
 
         for (i in 0 until node.childCount) {
             val child = try {

@@ -15,6 +15,7 @@ object NodeSnapshotFactory {
         className: String? = null,
         isSelected: Boolean = false,
         isScrollable: Boolean = false,
+        isVisibleToUser: Boolean = true,
         children: List<NodeSnapshot> = emptyList(),
     ): NodeSnapshot = NodeSnapshot(
         viewIdResourceName = id,
@@ -24,7 +25,83 @@ object NodeSnapshotFactory {
         isSelected = isSelected,
         isScrollable = isScrollable,
         children = children,
+        isVisibleToUser = isVisibleToUser,
     )
+
+    // ---- Instagram 457 (Nov 2026) shapes, checked against a live tree ----
+
+    private const val IG = "com.instagram.android:id/"
+
+    /** The 457 bottom bar: `tab_bar` holding one id'd button per tab. */
+    fun ig457TabBar(selected: String): NodeSnapshot = node(
+        id = IG + "tab_bar",
+        children = listOf(
+            "feed_tab" to "Home",
+            "clips_tab" to "Reels",
+            "direct_tab" to "Message",
+            "search_tab" to "Search and explore",
+            "profile_tab" to "Profile",
+        ).map { (id, desc) ->
+            node(
+                id = IG + id,
+                contentDescription = desc,
+                isSelected = ReelDetector.tabLabelFromViewId(IG + id) == selected,
+            )
+        },
+    )
+
+    /**
+     * A 457 main screen. Every tab's page stays mounted in
+     * `swipeable_tab_view_pager`; only the current one is visible. The
+     * hidden Reels page carries real clips ids and a reel author, which
+     * must never leak into detection of the visible page.
+     */
+    fun ig457MainScreen(selected: String): NodeSnapshot {
+        val homePage = node(
+            id = IG + "feed_page",
+            isVisibleToUser = selected == ReelDetector.TAB_HOME,
+            children = listOf(
+                node(id = "android:id/list", isScrollable = true, children = listOf(
+                    node(id = IG + "row_feed_profile_header", contentDescription = "some.author posted a photo 2 days ago"),
+                    node(id = IG + "row_feed_photo_imageview", contentDescription = "Photo by Some Author"),
+                    node(contentDescription = "Like"),
+                    node(contentDescription = "Comment"),
+                )),
+            ),
+        )
+        val reelsPage = node(
+            id = IG + "clips_page",
+            isVisibleToUser = selected == ReelDetector.TAB_REELS,
+            children = listOf(
+                node(id = IG + "clips_viewer_view_pager", isScrollable = true, children = listOf(
+                    node(id = IG + "clips_item_profile_name", text = "hidden.reel.author"),
+                )),
+                // The Reels page's own header: a selected "Reels" tab
+                // that is not the bottom-bar button.
+                node(id = IG + "clips_tab_header_reels", contentDescription = "Reels", isSelected = true),
+            ),
+        )
+        val inboxPage = node(
+            id = IG + "direct_page",
+            isVisibleToUser = selected == ReelDetector.TAB_DIRECT,
+            children = listOf(
+                node(id = IG + "thread_list", isScrollable = true, children = listOf(
+                    node(text = "a friend"),
+                )),
+            ),
+        )
+        return node(
+            id = IG + "main_container",
+            children = listOf(
+                node(
+                    id = IG + "swipeable_tab_view_pager",
+                    isScrollable = true,
+                    children = listOf(homePage, reelsPage, inboxPage),
+                ),
+                ig457TabBar(selected),
+            ),
+        )
+    }
 
     // ---- Prefabs that look like real Instagram screens ----
 

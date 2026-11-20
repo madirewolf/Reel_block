@@ -18,11 +18,22 @@ data class NodeSnapshot(
     val isSelected: Boolean,
     val isScrollable: Boolean,
     val children: List<NodeSnapshot>,
+    /**
+     * False for views laid out but not on screen. Instagram keeps every
+     * main tab's page (Reels, Messages, Profile, ...) in its tab pager
+     * at all times; only the current one is visible. Reading the hidden
+     * pages made Home look like a reel viewer and pulled reel authors
+     * from the hidden Reels page.
+     */
+    val isVisibleToUser: Boolean = true,
 ) {
-    /** Depth-first iteration including this node. */
+    /** Depth-first iteration over this node and its on-screen
+     *  descendants. Hidden subtrees are skipped. */
     fun flatten(): Sequence<NodeSnapshot> = sequence {
         yield(this@NodeSnapshot)
-        children.forEach { yieldAll(it.flatten()) }
+        children.forEach { child ->
+            if (child.isVisibleToUser) yieldAll(child.flatten())
+        }
     }
 
     companion object {
@@ -63,6 +74,11 @@ private fun copyNode(node: AccessibilityNodeInfo, depth: Int, maxDepth: Int): No
                 } catch (_: Throwable) {
                     null
                 } ?: continue
+                // Off-screen subtrees (hidden tab pages, the screen under
+                // a full-screen viewer) are skipped: they are never what
+                // the user is looking at, and copying them is most of the
+                // cost of a tree walk.
+                if (!child.isVisibleToUser) continue
                 add(copyNode(child, depth + 1, maxDepth))
             }
         }
@@ -75,5 +91,6 @@ private fun copyNode(node: AccessibilityNodeInfo, depth: Int, maxDepth: Int): No
         isSelected = node.isSelected,
         isScrollable = node.isScrollable,
         children = children,
+        isVisibleToUser = node.isVisibleToUser,
     )
 }
