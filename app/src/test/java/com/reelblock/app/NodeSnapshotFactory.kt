@@ -212,7 +212,7 @@ object NodeSnapshotFactory {
             node(
                 id = "com.instagram.android:id/thread_list",
                 isScrollable = true,
-                children = listOf(node(text = "mohammad"), node(text = "a friend")),
+                children = listOf(node(text = "sam"), node(text = "a friend")),
             ),
         ),
     )
