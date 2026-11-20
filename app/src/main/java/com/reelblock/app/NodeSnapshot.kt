@@ -1,5 +1,6 @@
 package com.reelblock.app
 
+import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 
 /**
@@ -70,7 +71,7 @@ private fun copyNode(node: AccessibilityNodeInfo, depth: Int, maxDepth: Int): No
         buildList(node.childCount) {
             for (i in 0 until node.childCount) {
                 val child = try {
-                    node.getChild(i)
+                    fetchChild(node, i)
                 } catch (_: Throwable) {
                     null
                 } ?: continue
@@ -94,3 +95,22 @@ private fun copyNode(node: AccessibilityNodeInfo, depth: Int, maxDepth: Int): No
         isVisibleToUser = node.isVisibleToUser,
     )
 }
+
+/**
+ * Prefetch flags for tree walks. Every getChild is an IPC to Instagram's
+ * UI thread. By default the system's batch prefetch is interruptible:
+ * our very next getChild cancels it, so each node cost its own round
+ * trip. On the Messages screen, where Instagram's UI thread is busy, that
+ * made one walk take ~1.8 s and held up blocking behind it. Asking for
+ * an uninterruptible batch brings up to 50 nodes back per IPC.
+ */
+internal val WALK_PREFETCH: Int =
+    AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID or
+        AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE
+
+private fun fetchChild(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        node.getChild(index, WALK_PREFETCH)
+    } else {
+        node.getChild(index)
+    }

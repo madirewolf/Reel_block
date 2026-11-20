@@ -427,7 +427,11 @@ class ReelBlockerService : AccessibilityService() {
             null
         }
         val rootNode: AccessibilityNodeInfo? = try {
-            rootInActiveWindow
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                getRootInActiveWindow(WALK_PREFETCH)
+            } else {
+                rootInActiveWindow
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "rootInActiveWindow threw", t)
             null
