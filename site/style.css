@@ -22,7 +22,7 @@ body {
 a { color: var(--text); }
 
 .wrap {
-  max-width: 680px;
+  max-width: 860px;
   margin: 0 auto;
   padding: 0 20px;
 }
@@ -41,22 +41,24 @@ header.top .tag { color: var(--muted); font-size: 14px; margin-left: auto; text-
 .hero {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 40px;
+  gap: 64px;
   align-items: center;
-  padding: 40px 0 64px;
+  padding: 40px 0 72px;
 }
 
 h1 {
-  font-size: clamp(34px, 7vw, 52px);
-  line-height: 1.08;
-  letter-spacing: -0.02em;
-  margin: 0 0 18px;
-  font-weight: 650;
+  font-size: clamp(32px, 5.4vw, 46px);
+  line-height: 1.14;
+  letter-spacing: -0.025em;
+  margin: 0 0 20px;
+  font-weight: 560;
 }
 
-.lede { color: var(--muted); font-size: 18px; margin: 0 0 28px; max-width: 34ch; }
+.lede { color: var(--muted); font-size: 17px; line-height: 1.7; margin: 0 0 30px; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.meta { color: var(--muted); font-size: 14px; margin: 14px 0 0; }
+.meta a { color: var(--muted); }
 
 .button {
   display: inline-block;
@@ -70,19 +72,87 @@ h1 {
 .button.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
 .button.soon { color: var(--muted); cursor: default; }
 
-/* The block screen, drawn like the app's "Dots" style. */
+/* The phone: the eyes pop up, blink, look left and right, close,
+   and turn into a stop sign. One 9 s loop shared by every part. */
 .phone {
-  width: 190px;
+  width: 200px;
   aspect-ratio: 9 / 19.5;
   border: 6px solid #1c1c1f;
-  border-radius: 30px;
-  background-color: #1c2533;
-  background-image: radial-gradient(circle, rgba(242, 242, 242, 0.14) 1.6px, transparent 2px);
-  background-size: 15px 15px;
-  display: grid;
-  place-items: center;
-  font-weight: 600;
-  font-size: 15px;
+  border-radius: 32px;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.anim { width: 128px; height: 128px; overflow: visible; }
+.anim g { transform-box: fill-box; transform-origin: center; }
+.anim .eye { fill: var(--text); }
+.anim .look { fill: #000; }
+.anim .sign { fill: #ff453a; stroke: #ff453a; stroke-width: 3; stroke-linejoin: round; }
+.anim .bars { fill: var(--text); }
+
+.anim .pop   { animation: rb-pop 9s infinite; }
+.anim .blink { animation: rb-blink 9s infinite; }
+.anim .look  { animation: rb-look 9s infinite ease-in-out; }
+.anim .stop  { animation: rb-stop 9s infinite; }
+.anim .bars  { animation: rb-bars 9s infinite; }
+.phone .label { font-weight: 600; font-size: 15px; opacity: 0; animation: rb-label 9s infinite; }
+
+/* 0.0 s pop in, 1.3 s blink, 2.0 s look left, 3.0 s look right,
+   4.8 s blink, 5.6 s close, 6.0 s stop sign, 8.4 s fade out. */
+@keyframes rb-pop {
+  0%    { transform: scale(0); }
+  4.5%  { transform: scale(1.12); }
+  6.7%  { transform: scale(1); }
+  65.6% { transform: scale(1); }
+  68.9%, 100% { transform: scale(0); }
+}
+
+@keyframes rb-blink {
+  0%, 14.4% { transform: scaleY(1); }
+  16.1%     { transform: scaleY(0.08); }
+  17.8%     { transform: scaleY(1); }
+  53.3%     { transform: scaleY(1); }
+  55%       { transform: scaleY(0.08); }
+  56.7%     { transform: scaleY(1); }
+  62.2%     { transform: scaleY(1); }
+  65.6%, 100% { transform: scaleY(0.06); }
+}
+
+@keyframes rb-look {
+  0%, 22.2%   { transform: translateX(0); }
+  26.7%, 33.3% { transform: translateX(-2.3px); }
+  40%, 46.7%  { transform: translateX(2.3px); }
+  50%, 100%   { transform: translateX(0); }
+}
+
+@keyframes rb-stop {
+  0%, 66.7% { transform: scale(0) rotate(-30deg); }
+  70.6%     { transform: scale(1.1) rotate(4deg); }
+  72.2%     { transform: scale(1) rotate(0); }
+  93.3%     { transform: scale(1) rotate(0); }
+  97.8%, 100% { transform: scale(0) rotate(0); }
+}
+
+@keyframes rb-bars {
+  0%, 68%   { transform: scaleY(0.06); }
+  73%, 100% { transform: scaleY(1); }
+}
+
+@keyframes rb-label {
+  0%, 71.1%   { opacity: 0; transform: translateY(6px); }
+  75.6%, 93.3% { opacity: 1; transform: translateY(0); }
+  97.8%, 100% { opacity: 0; transform: translateY(0); }
+}
+
+/* No motion wanted: show the end state, the stop sign. */
+@media (prefers-reduced-motion: reduce) {
+  .anim .pop, .anim .blink, .anim .look, .anim .stop, .anim .bars, .phone .label { animation: none; }
+  .anim .pop { transform: scale(0); }
+  .phone .label { opacity: 1; }
 }
 
 section { border-top: 1px solid var(--line); padding: 48px 0; }
@@ -103,6 +173,7 @@ h2 {
 .rows span { color: var(--muted); }
 
 p { margin: 0 0 14px; }
+section p { max-width: 64ch; }
 .muted { color: var(--muted); }
 
 footer {
@@ -118,6 +189,7 @@ footer {
 footer a { color: var(--muted); }
 
 /* Privacy page */
+.doc { max-width: 680px; }
 .doc h1 { font-size: clamp(30px, 6vw, 40px); }
 .doc h3 { font-size: 17px; margin: 32px 0 8px; }
 .doc ul { padding-left: 20px; margin: 0 0 14px; }
@@ -125,7 +197,8 @@ footer a { color: var(--muted); }
 
 @media (max-width: 600px) {
   .hero { grid-template-columns: 1fr; gap: 32px; padding-top: 16px; }
-  .phone { width: 150px; justify-self: center; }
+  .phone { width: 160px; justify-self: center; }
+  .anim { width: 92px; height: 92px; }
   .rows li { flex-direction: column; gap: 2px; }
   .rows strong { flex: none; }
   header.top { flex-wrap: wrap; row-gap: 6px; }
