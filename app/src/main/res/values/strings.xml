@@ -67,6 +67,7 @@
     <string name="option_notif_body">Says when blocking is on, with a Pause 1 min button.</string>
 
     <string name="view_log">Detection log</string>
+    <string name="privacy_policy">Privacy policy</string>
 
     <!-- Content descriptions for the switches. -->
     <string name="toggle_blocking">Block reels</string>

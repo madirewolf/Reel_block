@@ -166,6 +166,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.row_log).setOnClickListener {
             startActivity(Intent(this, LogActivity::class.java))
         }
+        // Opens in the browser, so the app itself still needs no internet permission.
+        findViewById<View>(R.id.row_privacy).setOnClickListener {
+            val page = Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL))
+            try { startActivity(page) } catch (_: Throwable) {
+                Toast.makeText(this, PRIVACY_URL, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     override fun onStart() {
@@ -465,5 +472,7 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         /** Longest side of a saved block-screen photo, in pixels. */
         const val PHOTO_MAX_SIDE = 1600
+
+        const val PRIVACY_URL = "https://reelitin.limiliminal.com/privacy"
     }
 }
